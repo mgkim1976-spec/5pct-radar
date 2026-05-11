@@ -33,7 +33,8 @@ from pathlib import Path
 from typing import Any
 
 from .actor_stats import classify_actor, fetch_filings_window, normalize_actor_name
-from .config import FILING_INTEL_DIR
+from .config import CORP_MAP_FILE, FILING_INTEL_DIR
+from .fetch_filing import list_majorstock
 
 
 # KOSPI 추적 ETF — KODEX 200 (069500). 종목 OHLCV API 사용 가능 (corr > 0.99).
@@ -94,6 +95,45 @@ def group_by_pair(filings: list[dict[str, Any]]) -> dict[tuple[str, str], list[d
     for k in by_pair:
         by_pair[k].sort(key=lambda x: x.get("rcept_dt", ""))
     return by_pair
+
+
+def enrich_with_majorstock(
+    pairs: dict[tuple[str, str], list[dict[str, Any]]],
+) -> dict[tuple[str, str], list[dict[str, Any]]]:
+    """list.json 의 pair 들에 majorstock.json 호출 → stkqy_irds·stkqy·stkrt 보강.
+
+    각 unique stock_code 당 1번 majorstock 호출 (캐시). 보고자명 정규화로 매칭.
+    """
+    cm = json.loads(CORP_MAP_FILE.read_text(encoding="utf-8"))
+    stock_cache: dict[str, list[dict[str, Any]]] = {}
+    enriched: dict[tuple[str, str], list[dict[str, Any]]] = {}
+
+    unique_stocks = {sc for (_, sc) in pairs}
+    print(f"   majorstock fetch — unique stocks: {len(unique_stocks)}")
+
+    for i, sc in enumerate(unique_stocks, 1):
+        if i % 100 == 0:
+            print(f"   majorstock {i}/{len(unique_stocks)}")
+        info = cm.get(sc)
+        if not info:
+            continue
+        stock_cache[sc] = list_majorstock(info["corp_code"])
+
+    for (actor, sc), _list_filings in pairs.items():
+        ms = stock_cache.get(sc, [])
+        if not ms:
+            continue
+        matched = [m for m in ms if actor == normalize_actor_name(m.get("repror", ""))]
+        if not matched:
+            continue
+        matched.sort(key=lambda x: x.get("rcept_dt", ""))
+        # actor_category 보존 — list.json 결과의 첫 항목에서
+        cat = (_list_filings[0] if _list_filings else {}).get("_cat", "?")
+        for m in matched:
+            m["_cat"] = cat
+        enriched[(actor, sc)] = matched
+
+    return enriched
 
 
 def classify_cycle(pair_filings: list[dict[str, Any]]) -> dict[str, Any]:
@@ -417,9 +457,13 @@ def run_lifecycle_backtest(days: int = 1825) -> tuple[Path | None, list[dict[str
     flt = filter_meaningful(raw)
     print(f"   activist/semi/pe filter: {len(flt)} / {len(raw)}")
 
-    print(f"\n[2/4] 운용사 × 종목 pair lifecycle 분류...")
+    print(f"\n[2a/4] list.json pair grouping...")
     pairs = group_by_pair(flt)
-    print(f"   pair 수: {len(pairs)}")
+    print(f"   초기 pair 수 (list.json): {len(pairs)}")
+
+    print(f"\n[2b/4] majorstock.json 보강 (stkqy_irds 가져오기) ...")
+    pairs = enrich_with_majorstock(pairs)
+    print(f"   majorstock 매칭 pair 수: {len(pairs)}")
 
     print(f"\n[3/4] 각 pair lifecycle classify + alpha 계산 (pykrx 가격 호출)...")
     kospi_cache: dict[str, dict[str, float]] = {}
