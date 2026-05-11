@@ -256,6 +256,13 @@ def main():
                    help="지난 N일 5%+ 신고 운용사·보고자별 ranking (LLM 호출 없음)")
     p.add_argument("--actor-top-n", type=int, default=20,
                    help="ranking 표시 상위 N (default 20)")
+    p.add_argument("--backtest-actor", type=int, metavar="DAYS",
+                   help="지난 N일 운용사별 5%+ 신고 follow-alpha backtest (pykrx 필요)")
+    p.add_argument("--backtest-horizon", default="d365",
+                   choices=["d30", "d90", "d180", "d365"],
+                   help="backtest 시점 (default d365)")
+    p.add_argument("--lifecycle", type=int, metavar="DAYS",
+                   help="지난 N일 운용사 × 종목 *full cycle* (매집→철수) 실현/미실현 alpha (pykrx 필요)")
     args = p.parse_args()
 
     if args.build_corp_map:
@@ -289,6 +296,16 @@ def main():
     if args.actor_ranking is not None:
         from .actor_stats import save_actor_ranking
         save_actor_ranking(days=args.actor_ranking, top_n=args.actor_top_n)
+        sys.exit(0)
+
+    if args.backtest_actor is not None:
+        from .backtest_actor import run_actor_backtest
+        run_actor_backtest(days=args.backtest_actor, horizon=args.backtest_horizon)
+        sys.exit(0)
+
+    if args.lifecycle is not None:
+        from .lifecycle_monitor import run_lifecycle_backtest
+        run_lifecycle_backtest(days=args.lifecycle)
         sys.exit(0)
 
     if args.scan_recent is not None:

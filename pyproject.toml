@@ -24,6 +24,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+backtest = [
+    "pykrx>=1.0",
+    "pandas>=2.0",
+]
 dev = [
     "pytest>=8.0",
     "ruff>=0.5",
