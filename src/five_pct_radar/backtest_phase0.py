@@ -30,8 +30,8 @@ def _yf_ticker(stock_code: str, corp_cls: str = "Y") -> str:
 _fundamentals_cache: dict[str, dict[str, float | None]] = {}
 
 
-def fetch_fundamentals_yf(stock_code: str) -> dict[str, float | None]:
-    """yfinance .info 에서 PBR / ROE / debt_to_equity / current_ratio.
+def fetch_fundamentals_yf(stock_code: str) -> dict[str, Any]:
+    """yfinance .info 에서 PBR / ROE / debt_to_equity / current_ratio + sector/industry.
 
     ⚠️ *현재* 값. Phase 1 의 look-ahead. KOSPI 우선, 실패 시 KOSDAQ.
     """
@@ -39,9 +39,10 @@ def fetch_fundamentals_yf(stock_code: str) -> dict[str, float | None]:
         return _fundamentals_cache[stock_code]
     import yfinance as yf  # type: ignore
 
-    out: dict[str, float | None] = {
+    out: dict[str, Any] = {
         "pbr": None, "roe_pct": None,
         "debt_to_equity": None, "current_ratio": None,
+        "sector": None, "industry": None,
     }
     for suffix in (".KS", ".KQ"):
         ticker = f"{stock_code}{suffix}"
@@ -50,14 +51,15 @@ def fetch_fundamentals_yf(stock_code: str) -> dict[str, float | None]:
             if not info or info.get("regularMarketPrice") is None:
                 continue
             pbr = info.get("priceToBook")
-            roe = info.get("returnOnEquity")  # 0.0~1.0 형식
-            de = info.get("debtToEquity")     # *100 형식 가능
+            roe = info.get("returnOnEquity")
+            de = info.get("debtToEquity")
             cr = info.get("currentRatio")
             out["pbr"] = float(pbr) if pbr else None
             out["roe_pct"] = float(roe) * 100 if roe else None
-            # debtToEquity 가 % (예: 75 = 75%) 또는 ratio (0.75) 인지 확인 — yf 는 보통 %
             out["debt_to_equity"] = float(de) / 100 if de and de > 5 else (float(de) if de else None)
             out["current_ratio"] = float(cr) if cr else None
+            out["sector"] = info.get("sector")
+            out["industry"] = info.get("industry")
             break
         except Exception:
             continue
@@ -199,6 +201,58 @@ def score_cycle_with_lifecycle_data(
     return score
 
 
+def add_sector_adjusted_return(scored: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """각 cycle 의 *섹터-중립 return* 계산.
+
+    sector_adj = yf_return - 같은 sector 종목들의 *동일 entry_date ±90일* 평균 return
+
+    sector 정보는 yfinance .info 의 'sector' 필드 (영어 카테고리 — Industrials,
+    Financial Services, Healthcare 등). 같은 sector 의 *다른 cycle* 평균과 비교.
+    """
+    from datetime import datetime, timedelta
+    # 각 cycle 에 sector 부여
+    for s in scored:
+        funds = _fundamentals_cache.get(s["stock_code"], {})
+        s["sector"] = funds.get("sector")
+
+    # sector 별 cycle 목록
+    by_sector: dict[str, list[dict[str, Any]]] = {}
+    for s in scored:
+        if s.get("yf_return_pct") is None or not s.get("sector"):
+            continue
+        by_sector.setdefault(s["sector"], []).append(s)
+
+    # 각 cycle 에 sector_adj_return 추가
+    for s in scored:
+        if s.get("yf_return_pct") is None or not s.get("sector"):
+            s["sector_adj_return"] = None
+            continue
+        peers = by_sector.get(s["sector"], [])
+        try:
+            s_entry_dt = datetime.strptime(s.get("yf_entry_date", "")[:8], "%Y%m%d")
+        except Exception:
+            s["sector_adj_return"] = None
+            continue
+        # 같은 sector + entry_date ±180일 범위의 동시기 peer
+        peer_returns = []
+        for p in peers:
+            if p is s:
+                continue
+            try:
+                p_entry_dt = datetime.strptime(p.get("yf_entry_date", "")[:8], "%Y%m%d")
+            except Exception:
+                continue
+            if abs((s_entry_dt - p_entry_dt).days) <= 180:
+                peer_returns.append(p["yf_return_pct"])
+        if peer_returns:
+            sector_avg = sum(peer_returns) / len(peer_returns)
+            s["sector_adj_return"] = round(s["yf_return_pct"] - sector_avg, 2)
+            s["sector_n_peers"] = len(peer_returns)
+        else:
+            s["sector_adj_return"] = None
+    return scored
+
+
 def add_yf_forward_return(
     scored: list[dict[str, Any]],
     cycles: list[dict[str, Any]],
@@ -301,13 +355,17 @@ def run_phase0(lifecycle_json_path: Path) -> Path:
     n_yf_ok = sum(1 for s in scored if s.get("yf_return_pct") is not None)
     print(f"   yfinance 가격 성공: {n_yf_ok}/{len(scored)}")
 
-    print(f"\n[4/4] bucket 분석 ...")
+    print(f"\n[4/4] 섹터-중립 alpha + bucket 분석 ...")
+    scored = add_sector_adjusted_return(scored)
+    n_sec = sum(1 for s in scored if s.get("sector_adj_return") is not None)
+    print(f"   sector-adj 계산 완료: {n_sec}/{len(scored)}")
     yf_analysis = bucket_analysis(scored, return_field="yf_return_pct")
     cycle_analysis = bucket_analysis(scored, return_field="cycle_return")
+    sector_analysis = bucket_analysis(scored, return_field="sector_adj_return")
 
     out_dir = FILING_INTEL_DIR
     out_path = out_dir / "phase0_score_validation.md"
-    md = _render_phase0(scored, yf_analysis, cycle_analysis, lifecycle_json_path)
+    md = _render_phase0(scored, yf_analysis, cycle_analysis, sector_analysis, lifecycle_json_path)
     out_path.write_text(md, encoding="utf-8")
     (out_dir / "phase0_score_validation.json").write_text(
         json.dumps(scored, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -316,7 +374,7 @@ def run_phase0(lifecycle_json_path: Path) -> Path:
     return out_path
 
 
-def _render_phase0(scored, yf_analysis, cycle_analysis, source) -> str:
+def _render_phase0(scored, yf_analysis, cycle_analysis, sector_analysis, source) -> str:
     out = []
     out.append(f"# Phase 0 — Follow-Trade Score 모델 sanity check")
     out.append("")
@@ -341,6 +399,24 @@ def _render_phase0(scored, yf_analysis, cycle_analysis, source) -> str:
             out.append("✅ **Monotonic 관계 확인** — 점수 ↑ → return ↑ — score 모델 *초안 validity*")
         else:
             out.append("❌ **Monotonic 깨짐** — 점수 모델 *재캘리브레이션 필요*")
+    out.append("")
+
+    out.append("## §1b. 🎯 점수 5분위 bucket — **섹터-중립 return** (반도체 효과 제거)")
+    out.append("")
+    if "buckets" in sector_analysis:
+        out.append("| Bucket | Score range | N | mean | median | win rate |")
+        out.append("|---:|---|---:|---:|---:|---:|")
+        for b in sector_analysis["buckets"]:
+            out.append(f"| {b['bucket']} | {b['score_range']} | {b['n']} | "
+                       f"{b['mean']:+.1f}% | {b['median']:+.1f}% | {b['win_rate']:.0f}% |")
+        out.append("")
+        if sector_analysis["is_monotonic"]:
+            out.append("✅ **섹터-중립 Monotonic 확인** — *반도체 효과 제거* 후 점수 ↑ → 알파 ↑")
+        else:
+            out.append("❌ 섹터-중립도 monotonic 깨짐 — 모델 신호 자체 부족")
+    out.append("")
+    out.append("> 섹터-중립 alpha = cycle yf_return − *동일 sector 종목 동시기 ±180일* 평균. "
+               "yfinance .info 의 sector 카테고리 (Industrials/Healthcare 등) 사용.")
     out.append("")
 
     out.append("## §2. 점수 5분위 bucket — lifecycle cycle return (대조군)")
