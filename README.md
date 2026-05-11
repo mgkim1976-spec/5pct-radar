@@ -211,25 +211,40 @@ data/filing_intel/filing_intel_index.json
 
 ---
 
-## 6.5. 🚨 정직한 backtest 결과 — *어떤 신고를 따라가야 하나*
+## 6.5. 🚨 정직한 backtest 결과
 
-10년 backtest (n=455 CLOSED cycle) 의 **결정적 발견**:
+10년 backtest 의 **결정적 발견** (3가지 한계 명시):
+
+### 운용사 ranking (CLOSED 사이클 ≥ 70 인 운용사만)
 
 ```
-🟢 매수 가치 (IRR > 15% hit rate 약 60~70%)
-  ─ 단발 매수 (1~2건) + Q4 (10~12월) 진입
-  ─ 시나리오 = 산업통합M&A / PE_buyout
-  ─ 본문 "공개매수 / 합병 / 인수계약" 키워드
+🟢 확정 양수 (closed_ratio 97%):
+   한국투자밸류 (n=71) median raw +4.2%  ← 유일 양수 확정
 
-🔴 ⚠️ 명백한 회피 (IRR > 15% hit rate 약 8%)
-  ─ 행동주의캠페인 시나리오 (n=126 표본, hit **7.9%**)
-  ─ 체계 매집 (3+ 매수) + 2년+ 장기 hold
-  ─ 인덱스 ETF 보다 못한 strategy — 시간 가치 못 만듦
+🔴 확정 음수 (closed_ratio 97%):
+   신영자산운용  (n=126) median raw -10.6%  ← 명확 follow 회피
+
+🟡 판단 보류 (closed_ratio < 70%, 미실현 큼):
+   VIP자산운용 (전체 70, closed 47%) — OPEN median raw +54%
+   * cycle 완성 (5년+) 후 평가 가능. 단기 결론 X
 ```
 
-→ **5pct-radar 의 *진정한 가치 = 단발 인수 신고 추적***, 행동주의 follow trade
-*아님*. *행동주의 follow* 는 *부정적 기대값*. 자세한 결과는
-[docs/STRATEGY_FINDINGS.md](docs/STRATEGY_FINDINGS.md) 참조.
+### 진입 시점 (look-ahead 없는) screening rule
+
+```
+🟢 매수 권장 (lift 1.9x):
+   actor_cat = PE_사모 + Q4 (10~12월) 진입
+   → hit15 = 47% (n=38, baseline 24.5%)
+   
+🔴 명확한 회피:
+   행동주의 캠페인 패턴 (n=126, hit15 5%)
+   Q2 진입 (hit15 12%)
+```
+
+→ ***적극적 매수 전략* 은 *작은 우위 + 큰 변동성***. 5pct-radar 의 진정한 활용:
+*회피 신호* + *catalyst awareness* (triage 도구).
+자세한 결과 + 한계 + closed-ratio bias 는
+[docs/STRATEGY_FINDINGS.md](docs/STRATEGY_FINDINGS.md) 필독.
 
 ---
 
