@@ -27,6 +27,44 @@ def _yf_ticker(stock_code: str, corp_cls: str = "Y") -> str:
     return f"{stock_code}{suffix}"
 
 
+_fundamentals_cache: dict[str, dict[str, float | None]] = {}
+
+
+def fetch_fundamentals_yf(stock_code: str) -> dict[str, float | None]:
+    """yfinance .info 에서 PBR / ROE / debt_to_equity / current_ratio.
+
+    ⚠️ *현재* 값. Phase 1 의 look-ahead. KOSPI 우선, 실패 시 KOSDAQ.
+    """
+    if stock_code in _fundamentals_cache:
+        return _fundamentals_cache[stock_code]
+    import yfinance as yf  # type: ignore
+
+    out: dict[str, float | None] = {
+        "pbr": None, "roe_pct": None,
+        "debt_to_equity": None, "current_ratio": None,
+    }
+    for suffix in (".KS", ".KQ"):
+        ticker = f"{stock_code}{suffix}"
+        try:
+            info = yf.Ticker(ticker).info
+            if not info or info.get("regularMarketPrice") is None:
+                continue
+            pbr = info.get("priceToBook")
+            roe = info.get("returnOnEquity")  # 0.0~1.0 형식
+            de = info.get("debtToEquity")     # *100 형식 가능
+            cr = info.get("currentRatio")
+            out["pbr"] = float(pbr) if pbr else None
+            out["roe_pct"] = float(roe) * 100 if roe else None
+            # debtToEquity 가 % (예: 75 = 75%) 또는 ratio (0.75) 인지 확인 — yf 는 보통 %
+            out["debt_to_equity"] = float(de) / 100 if de and de > 5 else (float(de) if de else None)
+            out["current_ratio"] = float(cr) if cr else None
+            break
+        except Exception:
+            continue
+    _fundamentals_cache[stock_code] = out
+    return out
+
+
 def fetch_forward_return_yf(
     stock_code: str,
     entry_date: str,  # YYYYMMDD
@@ -132,19 +170,26 @@ def score_cycle_with_lifecycle_data(
         if s.get("status") == "CLOSED" and s_exit and s_exit < entry_date:
             prior_exits += 1
 
+    # C. fundamentals (Phase 1 추가) — yfinance .info
+    funds = fetch_fundamentals_yf(cycle["stock_code"])
+
     # 진입가 vs 매수평균 (cycle 자체의 buy_avg) — Phase 0 의 단순화
     score = compute_follow_trade_score(
         actor_category=cycle.get("actor_category", "unknown"),
         actor_track=actor_track,
-        holding_purpose="경영권 영향" if cycle.get("actor_category") == "activist" else "단순투자",  # 단순화 (필드 부재)
+        holding_purpose="경영권 영향" if cycle.get("actor_category") == "activist" else "단순투자",
         stkrt_pct=cycle.get("max_pct", 5.0),
-        stkrt_irds=2.0 if cycle.get("n_buys", 0) >= 3 else 1.0,  # 단순화
+        stkrt_irds=2.0 if cycle.get("n_buys", 0) >= 3 else 1.0,
         n_buys_so_far=cycle.get("n_buys", 0),
         n_sells_so_far=cycle.get("n_sells", 0),
-        current_price=cycle.get("buy_avg_won", 0),  # Phase 0 단순화: 진입가 자체
-        buy_avg_so_far=None,  # first-entry neutral
+        pbr=funds.get("pbr"),
+        roe_pct=funds.get("roe_pct"),
+        debt_to_equity=funds.get("debt_to_equity"),
+        current_ratio=funds.get("current_ratio"),
+        current_price=cycle.get("buy_avg_won", 0),
+        buy_avg_so_far=None,
         n_other_actors_in_stock=n_peer,
-        parent_action="neutral",  # Phase 0 단순화
+        parent_action="neutral",
         prior_actor_exits=prior_exits,
     )
     score["cycle_return"] = cycle.get("return_pct")
@@ -244,11 +289,11 @@ def run_phase0(lifecycle_json_path: Path) -> Path:
     cycles = json.loads(lifecycle_json_path.read_text(encoding="utf-8"))
     print(f"   {len(cycles)} cycles")
 
-    print(f"\n[2/4] 각 cycle 에 score 계산 (point-in-time 흉내)...")
+    print(f"\n[2/4] 각 cycle 에 score 계산 (yfinance fundamentals 포함)...")
     scored = []
     for i, c in enumerate(cycles, 1):
         if i % 30 == 0:
-            print(f"   {i}/{len(cycles)}")
+            print(f"   {i}/{len(cycles)} (fundamentals cache {len(_fundamentals_cache)})")
         scored.append(score_cycle_with_lifecycle_data(c, cycles))
 
     print(f"\n[3/4] yfinance forward return (+365일) 신선 계산...")
@@ -313,12 +358,13 @@ def _render_phase0(scored, yf_analysis, cycle_analysis, source) -> str:
     valid = [s for s in scored if s.get("yf_return_pct") is not None]
     valid.sort(key=lambda x: -x["total"])
     if valid:
-        out.append("| Score | label | 운용사 | 종목 | yf_return | cycle_return | A | B | D | E |")
-        out.append("|---:|---|---|---|---:|---:|---:|---:|---:|---:|")
+        out.append("| Score | label | 운용사 | 종목 | yf_return | cycle_return | A | B | C | D | E |")
+        out.append("|---:|---|---|---|---:|---:|---:|---:|---:|---:|---:|")
         for s in valid[:10]:
             out.append(f"| {s['total']} | {s['label']} | {s['actor'][:15]} | {s['stock_code']} | "
                        f"{s.get('yf_return_pct', 0):+.1f}% | {(s.get('cycle_return') or 0):+.1f}% | "
-                       f"{s['A_actor']} | {s['B_filing']} | {s['D_entry']} | {s['E_cross']} |")
+                       f"{s['A_actor']} | {s['B_filing']} | {s.get('C_fundamentals',0)} | "
+                       f"{s['D_entry']} | {s['E_cross']} |")
     out.append("")
 
     out.append("## §4. 하위 10 cycle (점수 오름차순)")
