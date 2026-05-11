@@ -70,7 +70,13 @@ def run_one(rcept_no: str, stock_code: str | None = None, *, do_grounding: bool 
         file_date = meta.get("rcept_dt", "")
         print(f"  ✓ 신고일 {file_date}, 보고자 {meta.get('repror','?')}, 지분 {meta.get('stkrt','?')}%")
     else:
-        print("  · majorstock 메타 미발견 (선택적)")
+        # majorstock 은 발행회사 본인 신고만 잡으므로 제3자 신고는 미발견.
+        # rcept_no 앞 8자가 신고일자 (YYYYMMDD). 폴백.
+        if len(rcept_no) >= 8 and rcept_no[:8].isdigit():
+            file_date = f"{rcept_no[:4]}-{rcept_no[4:6]}-{rcept_no[6:8]}"
+            print(f"  · majorstock 메타 미발견 → rcept_no 폴백 신고일 {file_date}")
+        else:
+            print("  · majorstock 메타 미발견 (선택적)")
 
     # 4. LLM structured extract
     print("[3/6] Gemini structured output 으로 본문 → JSON ...")
@@ -230,6 +236,20 @@ def main():
     p.add_argument("--self-test", action="store_true", help="두올 케이스로 자동 검증")
     p.add_argument("--build-corp-map", action="store_true",
                    help="DART corpCode.xml 다운로드 → corp_code 매핑 빌드 (분기 1회)")
+    # 배치 모드 (P1)
+    p.add_argument("--scan-recent", type=int, metavar="DAYS",
+                   help="최근 N일 *모든* 5%+ 신고 일괄 분석 (KOSPI+KOSDAQ+KONEX)")
+    p.add_argument("--max-filings", type=int, default=None,
+                   help="배치 시 처리 최대 건수 (비용 통제용)")
+    p.add_argument("--market", choices=["Y", "K", "N"], default=None,
+                   help="배치 시 시장 필터 (Y=KOSPI, K=KOSDAQ, N=KONEX)")
+    p.add_argument("--summary", action="store_true",
+                   help="filing_intel_index 의 최근 20건 시나리오 요약 출력 후 종료")
+    # P2: catalyst chain
+    p.add_argument("--chain", metavar="RCEPT_NO",
+                   help="기존 분석된 신고의 후속 공시 timeline (180일 기본)")
+    p.add_argument("--chain-window", type=int, default=180,
+                   help="catalyst chain 추적 기간 (일, default 180)")
     args = p.parse_args()
 
     if args.build_corp_map:
@@ -239,6 +259,30 @@ def main():
     if args.self_test:
         ok = self_test()
         sys.exit(0 if ok else 1)
+
+    if args.summary:
+        from .scan import summarize_recent
+        print(summarize_recent())
+        sys.exit(0)
+
+    if args.chain:
+        from .catalyst_chain import build_chain_for_rcept_no, render_chain_markdown
+        chain = build_chain_for_rcept_no(args.chain, window_days=args.chain_window)
+        if chain is None:
+            print(f"⚠️ rcept_no={args.chain} 는 인덱스에 없거나 corp_code 매핑 실패")
+            sys.exit(1)
+        print(render_chain_markdown(chain))
+        sys.exit(0)
+
+    if args.scan_recent is not None:
+        from .scan import scan_recent
+        paths, stats = scan_recent(
+            days=args.scan_recent,
+            max_filings=args.max_filings,
+            do_grounding=not args.no_grounding,
+            market_filter=args.market,
+        )
+        sys.exit(0 if stats["succeeded"] >= 0 else 1)
 
     if not args.rcept_no:
         p.print_help()
