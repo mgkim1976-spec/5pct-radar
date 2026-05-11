@@ -32,7 +32,20 @@ def fetch_document_text(rcept_no: str, *, timeout: int = 60) -> str:
     if zf is None:
         return ""
     biggest = max(zf.namelist(), key=lambda n: zf.getinfo(n).file_size)
-    raw = zf.read(biggest).decode("utf-8", errors="replace")
+    raw_bytes = zf.read(biggest)
+    # 인코딩 자동 폴백 (옛 DART 신고는 CP949/EUC-KR, 최신은 UTF-8)
+    raw = None
+    for enc in ("utf-8", "cp949", "euc-kr"):
+        try:
+            candidate = raw_bytes.decode(enc)
+            # 한글 키워드 ≥ 1 검증 (mojibake 자동 감지)
+            if "보고서" in candidate or "보유" in candidate or "주식" in candidate:
+                raw = candidate
+                break
+        except UnicodeDecodeError:
+            continue
+    if raw is None:
+        raw = raw_bytes.decode("utf-8", errors="replace")
     txt = re.sub(r"<[^>]+>", " ", raw)
     txt = re.sub(r"\s+", " ", txt).strip()
     return txt

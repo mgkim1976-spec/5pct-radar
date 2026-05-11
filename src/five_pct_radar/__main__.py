@@ -287,7 +287,9 @@ def main():
                    choices=["d30", "d90", "d180", "d365"],
                    help="backtest 시점 (default d365)")
     p.add_argument("--lifecycle", type=int, metavar="DAYS",
-                   help="지난 N일 운용사 × 종목 *full cycle* (매집→철수) 실현/미실현 alpha (pykrx 필요)")
+                   help="지난 N일 운용사 × 종목 *full cycle* (매집→철수) 실현/미실현 alpha (yfinance)")
+    p.add_argument("--lifecycle-max-filings", type=int, default=None,
+                   help="lifecycle 의 document.xml 처리 신고 수 제한 (sample 검증용)")
     p.add_argument("--phase0", metavar="LIFECYCLE_JSON",
                    help="Phase 0 score 모델 검증 — lifecycle JSON 입력 → yfinance forward return + bucket 분석")
     args = p.parse_args()
@@ -332,7 +334,7 @@ def main():
 
     if args.lifecycle is not None:
         from .lifecycle_monitor import run_lifecycle_backtest
-        run_lifecycle_backtest(days=args.lifecycle)
+        run_lifecycle_backtest(days=args.lifecycle, max_filings=args.lifecycle_max_filings)
         sys.exit(0)
 
     if args.phase0:

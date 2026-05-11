@@ -3,26 +3,13 @@
 핵심 질문:
   *"이 운용사 따라서 매집 시작 시점에 사고, 철수 시점에 팔면 실제로 얼마 벌었나?"*
 
-방법:
-  1. 지난 N일 5%+ 신고 전체 fetch (DART list.json, 90일 chunk)
-  2. activist / semi_activist / pe_fund filter
-  3. *운용사 × 종목* pair 별 grouping
-  4. 각 pair 의 lifecycle 분류:
-       OPEN    — 마지막 신고 지분 ≥ 5%, 아직 보유 중
-       CLOSED  — 마지막 신고 지분 < 5% (신고 의무 종료 = 철수 완료)
-       TRADING — 매수 + 매도 둘 다 있고 현재 OPEN (중간 차익실현 후 재매수)
-  5. 매수 가중평균 단가 (stkqy_irds > 0 의 *주식수 가중*)
-     매도 가중평균 단가 (stkqy_irds < 0 의 *주식수 가중*)
-  6. CLOSED 사이클: realized return = (매도 평균 / 매수 평균) − 1
-                    KOSPI 동기간 alpha = realized − KOSPI 변화율
-     OPEN 사이클:   unrealized return = (현재가 / 매수 평균) − 1
-                    KOSPI alpha 동일 계산
+가격 데이터: **yfinance** (.KS / .KQ 자동 폴백). KRX 로그인 불필요.
+벤치마크: KODEX 200 ETF (069500.KS) — KOSPI 종합 추적, corr > 0.99.
 
 ⚠️ 한계:
-  - *철수 후 매도 단가 정확도* — DART 신고는 단가 미명시. 신고일 종가 proxy.
-  - *5% 미만 도달 후 추가 매도* 는 신고 의무 없음 → CLOSED 의 실현 단가는 *상한 추정*.
-  - 동일 운용사가 *같은 종목* 에 *재진입* 한 경우 cycle 구분 어려움 — 현재는
-    *5% 재도달 = 새 cycle 시작* 으로 처리 가능하지만 MVP 에서는 *통합* (역사 전체).
+  - 신고일 종가 = 매도/매수 단가 proxy
+  - 5% 미만 도달 후 추가 매도는 신고 의무 없음 → CLOSED 의 실현 단가는 상한 추정
+  - yfinance 일부 한국 종목 (특히 상장폐지) 데이터 누락
 """
 from __future__ import annotations
 
@@ -32,18 +19,21 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import re
+import time as _time
+
 from .actor_stats import classify_actor, fetch_filings_window, normalize_actor_name
 from .config import CORP_MAP_FILE, FILING_INTEL_DIR
-from .fetch_filing import list_majorstock
+from .fetch_filing import fetch_document_text, list_majorstock
 
 
-# KOSPI 추적 ETF — KODEX 200 (069500). 종목 OHLCV API 사용 가능 (corr > 0.99).
-KOSPI_INDEX = "069500"
+# KOSPI 추적 ETF — KODEX 200. yfinance ticker.
+KOSPI_INDEX_YF = "069500.KS"
 
 
-def _import_pykrx():
-    from pykrx import stock  # type: ignore
-    return stock
+def _import_yfinance():
+    import yfinance as yf  # type: ignore
+    return yf
 
 
 def _i(s: Any) -> int:
@@ -69,7 +59,10 @@ def _date(s: str) -> str:
 
 
 def filter_meaningful(filings: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """activist / semi / pe + stock_code 있음."""
+    """activist / semi / pe + stock_code 있음 + *대량보유* 보고서만.
+
+    "임원ㆍ주요주주특정증권등소유상황보고서" 같은 다른 유형은 제외.
+    """
     out = []
     for f in filings:
         flr = f.get("flr_nm", "")
@@ -77,6 +70,9 @@ def filter_meaningful(filings: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if cat not in ("activist", "semi_activist", "pe_fund"):
             continue
         if not f.get("stock_code"):
+            continue
+        report_nm = f.get("report_nm", "") or ""
+        if "대량보유" not in report_nm:
             continue
         out.append({**f, "_cat": cat})
     return out
@@ -97,13 +93,124 @@ def group_by_pair(filings: list[dict[str, Any]]) -> dict[tuple[str, str], list[d
     return by_pair
 
 
+_HOLDINGS_RE = re.compile(
+    r"보유주식등의 수 및 보유비율 보유주식등의 수 보유비율\s*"
+    r"직전 보고서\s*([\d,\-]+)\s*([\d.\-]+)\s*"
+    r"이번 보고서\s*([\d,\-]+)\s*([\d.\-]+)"
+)
+
+
+def _parse_count(s: str) -> int:
+    if not s or s.strip() == "-":
+        return 0
+    try:
+        return int(s.replace(",", "").strip())
+    except Exception:
+        return 0
+
+
+def _parse_pct(s: str) -> float:
+    if not s or s.strip() == "-":
+        return 0.0
+    try:
+        return float(s.strip())
+    except Exception:
+        return 0.0
+
+
+def parse_holdings_from_doc(text: str) -> dict[str, Any] | None:
+    """document.xml 본문에서 직전/이번 보유주식수·비율 추출."""
+    m = _HOLDINGS_RE.search(text)
+    if not m:
+        return None
+    return {
+        "prior_qty": _parse_count(m.group(1)),
+        "prior_pct": _parse_pct(m.group(2)),
+        "this_qty": _parse_count(m.group(3)),
+        "this_pct": _parse_pct(m.group(4)),
+    }
+
+
+def enrich_with_document_xml(
+    filings: list[dict[str, Any]],
+    *,
+    sleep_sec: float = 0.2,
+    checkpoint_path: Path | None = None,
+) -> list[dict[str, Any]]:
+    """list.json 의 모든 신고에 document.xml fetch + 본문 파싱.
+
+    DART majorstock.json 의 회사당 ~40건 한도 우회.
+    각 신고의 *직전/이번 보유주식수* 본문에서 직접 추출.
+
+    파싱 실패 시 (암호화 PDF / 표 형식 다름) 해당 신고 skip.
+
+    checkpoint_path: 매 100건마다 부분 결과 JSON 저장 (hang 시 복원 가능)
+    """
+    enriched = []
+    fail = 0
+    # 기존 checkpoint 있으면 resume
+    processed_rcept = set()
+    if checkpoint_path and checkpoint_path.exists():
+        try:
+            prev = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+            enriched = prev
+            processed_rcept = {f.get("rcept_no") for f in prev}
+            print(f"   checkpoint resume: {len(enriched)} 이미 처리됨")
+        except Exception:
+            pass
+
+    for i, f in enumerate(filings, 1):
+        rcept_no = f.get("rcept_no", "")
+        if rcept_no in processed_rcept:
+            continue
+        if i % 100 == 0:
+            print(f"   document.xml {i}/{len(filings)} (succ {len(enriched)} fail {fail})")
+            if checkpoint_path:
+                try:
+                    checkpoint_path.write_text(
+                        json.dumps(enriched, ensure_ascii=False, indent=2),
+                        encoding="utf-8")
+                except Exception:
+                    pass
+        if not rcept_no:
+            continue
+        try:
+            text = fetch_document_text(rcept_no)
+        except Exception:
+            fail += 1
+            continue
+        if not text:
+            fail += 1
+            continue
+        parsed = parse_holdings_from_doc(text)
+        if parsed is None:
+            fail += 1
+            continue
+        f["stkqy"] = parsed["this_qty"]
+        f["stkqy_irds"] = parsed["this_qty"] - parsed["prior_qty"]
+        f["stkrt"] = round(parsed["this_pct"], 2)
+        f["stkrt_irds"] = round(parsed["this_pct"] - parsed["prior_pct"], 2)
+        f["repror"] = f.get("flr_nm", "")
+        enriched.append(f)
+        if sleep_sec:
+            _time.sleep(sleep_sec)
+    print(f"   document.xml 파싱 완료: {len(enriched)}/{len(filings)} 성공, {fail} 실패")
+    # 최종 checkpoint
+    if checkpoint_path:
+        try:
+            checkpoint_path.write_text(
+                json.dumps(enriched, ensure_ascii=False, indent=2),
+                encoding="utf-8")
+        except Exception:
+            pass
+    return enriched
+
+
 def enrich_with_majorstock(
     pairs: dict[tuple[str, str], list[dict[str, Any]]],
 ) -> dict[tuple[str, str], list[dict[str, Any]]]:
-    """list.json 의 pair 들에 majorstock.json 호출 → stkqy_irds·stkqy·stkrt 보강.
-
-    각 unique stock_code 당 1번 majorstock 호출 (캐시). 보고자명 정규화로 매칭.
-    """
+    """[LEGACY] majorstock.json 의 회사당 ~40건 한도 때문에 옛 데이터 누락.
+    대안: enrich_with_document_xml (5%+ 신고 본문 파싱)."""
     cm = json.loads(CORP_MAP_FILE.read_text(encoding="utf-8"))
     stock_cache: dict[str, list[dict[str, Any]]] = {}
     enriched: dict[tuple[str, str], list[dict[str, Any]]] = {}
@@ -178,14 +285,35 @@ def classify_cycle(pair_filings: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def fetch_price_series(stock_code: str, bgn: str, end: str, stock) -> dict[str, float]:
-    try:
-        df = stock.get_market_ohlcv(bgn, end, stock_code)
-        if df is None or df.empty:
-            return {}
-        return {idx.strftime("%Y%m%d"): float(row["종가"]) for idx, row in df.iterrows()}
-    except Exception:
-        return {}
+def fetch_price_series(stock_code_or_ticker: str, bgn: str, end: str, yf) -> dict[str, float]:
+    """yfinance 가격 series. stock_code 6자리는 .KS → .KQ 폴백.
+    이미 ticker 형태 ('069500.KS') 면 그대로 사용.
+    bgn/end: YYYYMMDD 또는 YYYY-MM-DD.
+    """
+    bgn_iso = f"{bgn[:4]}-{bgn[4:6]}-{bgn[6:8]}" if len(bgn) == 8 and bgn.isdigit() else bgn
+    end_iso = f"{end[:4]}-{end[4:6]}-{end[6:8]}" if len(end) == 8 and end.isdigit() else end
+
+    candidates = [stock_code_or_ticker]
+    if "." not in stock_code_or_ticker and len(stock_code_or_ticker) == 6:
+        candidates = [f"{stock_code_or_ticker}.KS", f"{stock_code_or_ticker}.KQ"]
+
+    for ticker in candidates:
+        try:
+            df = yf.download(ticker, start=bgn_iso, end=end_iso,
+                             progress=False, auto_adjust=True)
+            if df is None or df.empty:
+                continue
+            df.index = df.index.strftime("%Y%m%d")
+            out = {}
+            for d in df.index:
+                v = df.loc[d, "Close"]
+                if hasattr(v, "iloc"):
+                    v = v.iloc[0]
+                out[d] = float(v)
+            return out
+        except Exception:
+            continue
+    return {}
 
 
 def _nearest(series: dict[str, float], target: str) -> float | None:
@@ -201,7 +329,7 @@ def _nearest(series: dict[str, float], target: str) -> float | None:
 def compute_cycle_alpha(
     pair: tuple[str, str],
     cycle: dict[str, Any],
-    stock,
+    yf,
     kospi_cache: dict[str, dict[str, float]],
 ) -> dict[str, Any] | None:
     """단일 cycle 의 realized (CLOSED) 또는 unrealized (OPEN) alpha."""
@@ -212,7 +340,7 @@ def compute_cycle_alpha(
     bgn = _date(cycle["first_date"])
     today = datetime.now().strftime("%Y%m%d")
     end_horizon = today
-    series = fetch_price_series(sc, bgn, end_horizon, stock)
+    series = fetch_price_series(sc, bgn, end_horizon, yf)
     if not series:
         return None
 
@@ -266,7 +394,7 @@ def compute_cycle_alpha(
     # KOSPI alpha
     entry_date = _date(cycle["buys"][0].get("rcept_dt", ""))
     if entry_date not in kospi_cache:
-        kospi_cache[entry_date] = fetch_price_series(KOSPI_INDEX, entry_date, today, stock)
+        kospi_cache[entry_date] = fetch_price_series(KOSPI_INDEX_YF, entry_date, today, yf)
     kospi_series = kospi_cache.get(entry_date, {})
     kospi_entry = _nearest(kospi_series, entry_date)
     kospi_exit = _nearest(kospi_series, exit_date) if kospi_series else None
@@ -454,24 +582,37 @@ def render_lifecycle_markdown(
     return "\n".join(out)
 
 
-def run_lifecycle_backtest(days: int = 1825) -> tuple[Path | None, list[dict[str, Any]]]:
-    """5년 기본. 1) fetch 5%+ 2) filter activist/semi/pe 3) pair lifecycle 4) realized/unrealized alpha."""
-    stock = _import_pykrx()
+def run_lifecycle_backtest(
+    days: int = 1825,
+    *,
+    max_filings: int | None = None,
+) -> tuple[Path | None, list[dict[str, Any]]]:
+    """기본 5년. 1) fetch 5%+ 2) filter activist/semi/pe 3) pair lifecycle 4) realized/unrealized alpha (yfinance).
+
+    max_filings: filter 통과 신고 중 최초 N건만 처리 (검증·sample 용)
+    """
+    yf = _import_yfinance()
     print(f"\n[1/4] 지난 {days}일 5%+ 신고 fetch...")
     raw = fetch_filings_window(days)
     flt = filter_meaningful(raw)
     print(f"   activist/semi/pe filter: {len(flt)} / {len(raw)}")
 
-    print(f"\n[2a/4] list.json pair grouping...")
-    pairs = group_by_pair(flt)
-    print(f"   초기 pair 수 (list.json): {len(pairs)}")
+    if max_filings is not None and len(flt) > max_filings:
+        print(f"   max_filings={max_filings} 적용 — 처음 {max_filings} 건만 처리")
+        flt = flt[:max_filings]
 
-    print(f"\n[2b/4] majorstock.json 보강 (stkqy_irds 가져오기) ...")
-    pairs = enrich_with_majorstock(pairs)
-    print(f"   majorstock 매칭 pair 수: {len(pairs)}")
+    print(f"\n[2/4] document.xml 본문 파싱 → stkqy_irds 추출 ...")
+    print(f"   각 신고 본문 fetch (sleep 0.2s, checkpoint 매 100건)")
+    FILING_INTEL_DIR.mkdir(parents=True, exist_ok=True)
+    end_label = datetime.now().strftime("%Y%m%d")
+    enrich_ckpt = FILING_INTEL_DIR / f"lifecycle_{end_label}_{days}d_enrich.json"
+    enriched_filings = enrich_with_document_xml(flt, checkpoint_path=enrich_ckpt)
 
-    print(f"\n[3/4] 각 pair lifecycle classify + alpha 계산 (pykrx 가격 호출)...")
-    print(f"   rate-limit 안전 모드: sleep 0.5s/pair, checkpoint 매 50건")
+    pairs = group_by_pair(enriched_filings)
+    print(f"   pair 수: {len(pairs)}")
+
+    print(f"\n[3/4] 각 pair lifecycle classify + alpha 계산 (yfinance)...")
+    print(f"   sleep 0.2s/pair, checkpoint 매 50건")
     FILING_INTEL_DIR.mkdir(parents=True, exist_ok=True)
     end_label = datetime.now().strftime("%Y%m%d")
     checkpoint_path = FILING_INTEL_DIR / f"lifecycle_{end_label}_{days}d_partial.json"
@@ -493,7 +634,7 @@ def run_lifecycle_backtest(days: int = 1825) -> tuple[Path | None, list[dict[str
         if not cyc or cyc.get("n_buys", 0) == 0:
             continue
         try:
-            result = compute_cycle_alpha(pair, cyc, stock, kospi_cache)
+            result = compute_cycle_alpha(pair, cyc, yf, kospi_cache)
         except Exception as e:
             print(f"   ! pair {pair} 에러: {e}")
             fail += 1
@@ -502,7 +643,7 @@ def run_lifecycle_backtest(days: int = 1825) -> tuple[Path | None, list[dict[str
             fail += 1
             continue
         cycles.append(result)
-        time.sleep(0.5)  # KRX rate-limit 회피
+        time.sleep(0.2)  # yfinance 안전 sleep
     print(f"   완료: {len(cycles)} cycle 계산, {fail} 실패")
 
     print(f"\n[4/4] 보고서 작성 ...")
