@@ -134,13 +134,17 @@ def summarize_recent(limit: int = 20) -> str:
     # file_date 내림차순
     rows = sorted(idx.items(), key=lambda kv: kv[1].get("file_date", ""), reverse=True)[:limit]
     out = []
-    out.append("| 신고일 | 종목 | 보고자 | 시나리오 | EV mean |")
-    out.append("|---|---|---|---|---:|")
+    out.append("| 신고일 | 종목 | 보고자 | 시나리오 | EV mean | **FT Score** |")
+    out.append("|---|---|---|---|---:|---|")
     for rcept_no, e in rows:
         nm = e.get("issuer_name", "")
         tk = e.get("issuer_ticker", "")
         filer = (e.get("filer_name", "") or "")[:24]
         scn = e.get("scenario", "")
         ev = e.get("ev_mean_pct", 0) or 0
-        out.append(f"| {e.get('file_date','')} | {nm}({tk}) | {filer} | {scn} | {ev:+.1f}% |")
+        fs = e.get("ft_score")
+        fl = e.get("ft_label", "")
+        score_cell = f"**{fs}** {fl}" if fs is not None else "—"
+        out.append(f"| {e.get('file_date','')} | {nm}({tk}) | {filer} | {scn} | "
+                   f"{ev:+.1f}% | {score_cell} |")
     return "\n".join(out)

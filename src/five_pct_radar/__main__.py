@@ -141,6 +141,23 @@ def run_one(rcept_no: str, stock_code: str | None = None, *, do_grounding: bool 
     print(f"  ✓ scenario = {classification.get('scenario')}, "
           f"EV mean = {classification.get('ev_mean_pct'):+.1f}%")
 
+    # 7b. Follow-Trade Score 계산 (Phase 1)
+    score_card = None
+    try:
+        from .score_filing import score_single_filing, render_score_card
+        ftscore = score_single_filing(
+            rcept_no=rcept_no,
+            stock_code=stock_code or "",
+            corp_code=corp_code or "",
+            flr_nm=filer_name,
+            rcept_dt=file_date,
+            holding_purpose=extracted.get("보유목적", ""),
+        )
+        print(f"  · Follow-Trade Score = {ftscore['total']}/100 ({ftscore['label']})")
+        score_card = render_score_card(ftscore)
+    except Exception as e:
+        print(f"  · score 계산 skip: {e}")
+
     # 8. 보고서 + 인덱스
     md = report.render(
         rcept_no=rcept_no,
@@ -154,8 +171,12 @@ def run_one(rcept_no: str, stock_code: str | None = None, *, do_grounding: bool 
         grounding_queries=grounding_queries,
         classification=classification,
     )
+    # score 첨부 (있으면 §3 시나리오 다음에)
+    if score_card:
+        md = md.replace("## §4. 12개월 EV 분포",
+                        score_card + "\n\n## §4. 12개월 EV 분포")
     path = report.save_report(md, FILING_INTEL_DIR, rcept_no)
-    report.save_index(FILING_INTEL_DIR, rcept_no, {
+    idx_payload = {
         "issuer_name": corp_name,
         "issuer_ticker": stock_code,
         "file_date": file_date,
@@ -164,7 +185,11 @@ def run_one(rcept_no: str, stock_code: str | None = None, *, do_grounding: bool 
         "ev_mean_pct": classification.get("ev_mean_pct"),
         "confidence": classification.get("confidence"),
         "report_path": str(path.relative_to(DATA_DIR.parent)),
-    })
+    }
+    if score_card:
+        idx_payload["ft_score"] = ftscore["total"]
+        idx_payload["ft_label"] = ftscore["label"]
+    report.save_index(FILING_INTEL_DIR, rcept_no, idx_payload)
     print(f"\n✅ 저장: {path}")
     return path
 
