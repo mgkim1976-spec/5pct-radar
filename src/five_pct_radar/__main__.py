@@ -263,6 +263,8 @@ def main():
                    help="backtest 시점 (default d365)")
     p.add_argument("--lifecycle", type=int, metavar="DAYS",
                    help="지난 N일 운용사 × 종목 *full cycle* (매집→철수) 실현/미실현 alpha (pykrx 필요)")
+    p.add_argument("--phase0", metavar="LIFECYCLE_JSON",
+                   help="Phase 0 score 모델 검증 — lifecycle JSON 입력 → yfinance forward return + bucket 분석")
     args = p.parse_args()
 
     if args.build_corp_map:
@@ -306,6 +308,11 @@ def main():
     if args.lifecycle is not None:
         from .lifecycle_monitor import run_lifecycle_backtest
         run_lifecycle_backtest(days=args.lifecycle)
+        sys.exit(0)
+
+    if args.phase0:
+        from .backtest_phase0 import run_phase0
+        run_phase0(Path(args.phase0))
         sys.exit(0)
 
     if args.scan_recent is not None:
