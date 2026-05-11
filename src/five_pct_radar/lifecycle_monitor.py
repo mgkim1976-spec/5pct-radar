@@ -245,6 +245,11 @@ def compute_cycle_alpha(
         if sell_total_qty > 0:
             sell_avg = sell_total_value / sell_total_qty
 
+    # 데이터 클린: CLOSED 인데 sell_avg=None (매도일 모두 가격 데이터 없음)
+    # → 상장폐지 후 신고 또는 KRX 미커버. realized alpha 신뢰 못 함 → skip.
+    if cycle["status"] == "CLOSED" and sell_avg is None:
+        return None
+
     # exit price: CLOSED 의 경우 마지막 매도일 가격, 그 외 현재가
     if cycle["status"] == "CLOSED" and sell_avg is not None:
         exit_price = sell_avg
@@ -466,21 +471,38 @@ def run_lifecycle_backtest(days: int = 1825) -> tuple[Path | None, list[dict[str
     print(f"   majorstock 매칭 pair 수: {len(pairs)}")
 
     print(f"\n[3/4] 각 pair lifecycle classify + alpha 계산 (pykrx 가격 호출)...")
+    print(f"   rate-limit 안전 모드: sleep 0.5s/pair, checkpoint 매 50건")
+    FILING_INTEL_DIR.mkdir(parents=True, exist_ok=True)
+    end_label = datetime.now().strftime("%Y%m%d")
+    checkpoint_path = FILING_INTEL_DIR / f"lifecycle_{end_label}_{days}d_partial.json"
+
     kospi_cache: dict[str, dict[str, float]] = {}
     cycles: list[dict[str, Any]] = []
     fail = 0
     for i, (pair, filings) in enumerate(pairs.items(), 1):
         if i % 50 == 0:
             print(f"   {i}/{len(pairs)} (succ {len(cycles)} fail {fail})")
+            # checkpoint partial save
+            try:
+                checkpoint_path.write_text(
+                    json.dumps(cycles, ensure_ascii=False, indent=2), encoding="utf-8"
+                )
+            except Exception:
+                pass
         cyc = classify_cycle(filings)
         if not cyc or cyc.get("n_buys", 0) == 0:
             continue
-        result = compute_cycle_alpha(pair, cyc, stock, kospi_cache)
+        try:
+            result = compute_cycle_alpha(pair, cyc, stock, kospi_cache)
+        except Exception as e:
+            print(f"   ! pair {pair} 에러: {e}")
+            fail += 1
+            continue
         if result is None:
             fail += 1
             continue
         cycles.append(result)
-        time.sleep(0.03)
+        time.sleep(0.5)  # KRX rate-limit 회피
     print(f"   완료: {len(cycles)} cycle 계산, {fail} 실패")
 
     print(f"\n[4/4] 보고서 작성 ...")

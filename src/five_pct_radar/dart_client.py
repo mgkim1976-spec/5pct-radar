@@ -20,7 +20,15 @@ _SESSION.headers.update({"User-Agent": "Mozilla/5.0"})
 
 
 def dart_get(path: str, params: dict | None = None, retries: int = 3, timeout: int = 20) -> Any:
-    """DART OpenAPI JSON GET. 실패 시 None."""
+    """DART OpenAPI JSON GET. rate-limit aware retry.
+
+    DART 응답 status:
+      "000" = 정상
+      "010" = 등록되지 않은 키
+      "020" = 사용 한도 초과 → 60초 backoff
+      "100" = 필수값 누락
+      "800" = 시스템 점검
+    """
     if not DART_API_KEY:
         raise RuntimeError("DART_API_KEY 미설정")
     p = dict(params or {})
@@ -29,9 +37,23 @@ def dart_get(path: str, params: dict | None = None, retries: int = 3, timeout: i
     for i in range(retries):
         try:
             r = _SESSION.get(url, params=p, timeout=timeout)
-            return r.json()
+            # ZIP/binary 응답 (corpCode.xml 등) 은 json() 호출 안 함 — dart_fetch_zip 별도
+            ctype = r.headers.get("content-type", "")
+            if "json" not in ctype.lower():
+                return None
+            j = r.json()
+            status = j.get("status", "")
+            if status == "020":
+                # 사용 한도 초과 — 길게 backoff
+                time.sleep(60)
+                continue
+            if status == "800":
+                # 시스템 점검 — 짧게 backoff
+                time.sleep(10)
+                continue
+            return j
         except Exception:
-            time.sleep(0.5 * (i + 1))
+            time.sleep(1.0 * (i + 1))
     return None
 
 
