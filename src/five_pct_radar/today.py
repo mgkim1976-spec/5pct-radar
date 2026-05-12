@@ -19,7 +19,7 @@ from typing import Any
 
 from .config import CORP_MAP_FILE, DATA_DIR
 from .dart_client import dart_get
-from .dive import ACTOR_BACKTEST
+from .dive import ACTOR_BACKTEST, match_actor
 from .position import list_positions, get_trigger_alerts
 
 TODAY_DIR = DATA_DIR / "today"
@@ -72,12 +72,8 @@ def score_filing(filing: dict) -> dict[str, Any]:
     score = 0
     flags: list[str] = []
 
-    # 운용사 매칭
-    backtest = None
-    for actor, bt in ACTOR_BACKTEST.items():
-        if actor in flr or flr in actor:
-            backtest = bt
-            break
+    # 운용사 매칭 (별칭 지원)
+    _, backtest = match_actor(flr)
 
     if backtest:
         if "🟢 강한 매수" in backtest["signal"]:

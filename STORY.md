@@ -100,6 +100,69 @@ Phase 1 검증 직후, 사용자는 별도 repo 로 분리를 지시:
 
 ---
 
+## 2일차 (2026-05-12) — Backtest 검증 + Daily Ops 통합
+
+1일차에 *5%+ 신고를 자동 분석* 까지 끝냈다. 그러나 *"그래서 뭐 살까?"* 답은
+없었다. 2일차는 **검증과 사용** 의 날이었다.
+
+### 오전 — 10년 lifecycle backtest
+
+10년치 5%+ 신고 (n=682 cycles) 의 *full lifecycle* 추적:
+- CLOSED 455 / OPEN 98 / TRADING 129
+- 운용사 × A1 exit (+20%/-10%) backtest:
+  - 베어링 누적 매수: hit15 **49%** (baseline 28% 대비 +21%p)
+  - VIP 모든 매수: hit15 **45%**
+  - 신영 *최초 진입만*: hit15 44% (누적은 36%)
+  - 에이티넘: hit15 **5%** — 회피 시그널 발견
+- Walk-forward CV (3 윈도우): *2021-2023 약세장* 모든 strategy 약함,
+  *2024-2026* 강함 — *regime-dependent alpha* 확인
+
+### 오후 — 오로라 ad-hoc dive
+
+VIP가 *4/30 (1Q 잠정실적 발표 다음날)* 에 81,693주를 *16,989원에 폭매수* —
+*전체 매수의 71%*. 이 패턴이 ***"실적 confirm 후 conviction 추가매수"*** 라는
+명확한 시그널이었다.
+
+오로라 분석을 위해 약 **11단계 ad-hoc 작업** 필요했다:
+1. lifecycle JSON 에서 VIP 진입 cycle 찾기
+2. 종목명 매핑 (corp_code_map)
+3. DART company.json 회사 개요
+4. DART fnlttSinglAcnt — 2025 연간 재무
+5. DART 잠정실적 공시 검색 (4/29)
+6. DART document.xml 본문 다운로드
+7. ZIP 압축 풀고 인코딩 fallback (UTF-8 → CP949)
+8. 본문 정규식으로 매출/영업이익 추출
+9. majorstock 신고 본문에서 매매 단가 파싱
+10. 가중평균 매수가 계산
+11. A1 권장 진입가 + §13 사람 검증 체크리스트
+
+이 11단계를 *명령어 1줄* 로 만드는 게 다음 도구의 사양이 됐다.
+
+### 저녁 — Daily Ops 5종 + 사이즈 추천
+
+**`radar today` / `dive` / `position` / `journal` / `notify` / `size`** 통합:
+
+- `today`: 71건 신고 → 검증된 운용사 매칭 → STRONG/MEDIUM/AVOID/IGNORE 4분류
+- `dive <code>`: 11단계 → 명령어 1줄. 잠정실적 본문 자동 파싱 (PER 5.7배 자동)
+- `position`: 진입 기록 + A1 자동 트리거 + yfinance 실시간 가격
+- `journal`: 청산 사후 회고 (가설 vs 실제, 운용사별 통계)
+- `notify`: 텔레그램 push (없으면 stdout fallback)
+- `size`: Kelly 변형 — 1억 자본 × VIP hit15 45% → 2.08% (208만원) 추천
+
+오로라 *수동 분석 90분* 이 *`radar dive 039830` 30초* 가 됐다.
+
+### 발견된 패턴
+
+`radar today` 실행 결과 — **VIP가 *5/11 하루에* 3종목 동시 신고**:
+- 오로라 (039830) — 이미 분석 완료
+- 토비스 (051360) — VIP unrealized +22%
+- **LF (093050) — 신규** — *PBR 0.39, 한 달간 33회 매수*
+
+LF 의 ***PBR 0.39 + VIP 30회 매일 매수*** 는 *수동으로는 못 발견했을* 패턴.
+도구가 *사람보다 멀리* 보기 시작했다.
+
+---
+
 ## 흥미로운 협업 패턴
 
 이 도구가 1일 만에 만들어진 비결:

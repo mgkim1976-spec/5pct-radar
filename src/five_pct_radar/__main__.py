@@ -250,7 +250,7 @@ def self_test() -> bool:
     return all_ok
 
 
-SUBCOMMANDS = {"today", "dive", "position", "journal", "notify"}
+SUBCOMMANDS = {"today", "dive", "position", "journal", "notify", "size"}
 
 
 def _dispatch_subcommand() -> bool:
@@ -287,12 +287,26 @@ def _dispatch_subcommand() -> bool:
             ap.add_argument("--shares", type=int, required=True)
             ap.add_argument("--actor", default="", help="follow 한 운용사")
             ap.add_argument("--note", default="", help="§13 메모")
+            ap.add_argument("--capital", type=float, default=0,
+                            help="총 자본 (원) — 사이즈 검증용. 0이면 skip")
             a = ap.parse_args(args)
             p = pos_mod.add_position(a.stock_code, a.price, a.shares,
                                      actor_followed=a.actor, note=a.note)
             print(f"✅ 포지션 추가: {p['corp_name']} ({p['stock_code']}) "
                   f"@ {p['entry_price']:,.0f}원 × {p['shares']:,}주")
             print(f"   익절 {p['take_profit']:,}원 / 손절 {p['stop_loss']:,}원")
+            # 사이즈 검증 (자본 지정 시)
+            if a.actor and a.capital > 0:
+                from .sizing import recommend_size
+                rec = recommend_size(a.actor, a.capital, a.price)
+                if rec.get("matched") and rec.get("recommended_pct"):
+                    actual_pct = (a.shares * a.price) / a.capital * 100
+                    recommended = rec["recommended_pct"]
+                    if actual_pct > recommended * 1.5:
+                        print(f"\n⚠️  현재 진입 {actual_pct:.2f}% 가 권장 {recommended:.2f}% 의 1.5배 초과")
+                        print(f"    Kelly 추천: {rec['shares']:,}주 ({rec['recommended_won']:,.0f}원)")
+                    else:
+                        print(f"\n📐 사이즈 OK ({actual_pct:.2f}% / 권장 {recommended:.2f}%)")
         elif sub == "list":
             print(pos_mod.render_position_list())
         elif sub == "close":
@@ -331,6 +345,19 @@ def _dispatch_subcommand() -> bool:
         from .notify import send_today_summary
         ok = send_today_summary()
         print("✅ 알림 전송 성공" if ok else "⚠️ 텔레그램 미설정 또는 실패 — 위 출력 참조")
+        return True
+
+    if cmd == "size":
+        from .sizing import recommend_size, render_sizing
+        ap = argparse.ArgumentParser(prog="radar size")
+        ap.add_argument("--actor", required=True, help="follow 할 운용사")
+        ap.add_argument("--capital", type=float, required=True, help="총 자본 (원)")
+        ap.add_argument("--price", type=float, required=True, help="진입가 (원)")
+        ap.add_argument("--loss-pct", type=float, default=10.0, help="A1 손절 % (기본 10)")
+        a = ap.parse_args(rest)
+        rec = recommend_size(a.actor, a.capital, a.price,
+                             override_per_share_risk_pct=a.loss_pct)
+        print(render_sizing(rec))
         return True
 
     return False

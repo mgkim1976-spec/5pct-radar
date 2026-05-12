@@ -218,6 +218,20 @@ python -m five_pct_radar journal review
 - *follow 한 운용사별* 통계 (실제 성과 vs backtest 기대)
 - 각 청산의 진입 메모 + 청산 메모
 
+### `size` — 포지션 사이즈 추천 (Kelly 변형)
+
+```bash
+# 1억 자본, VIP follow, 17,390원 진입 가정
+python -m five_pct_radar size --actor "VIP" --capital 100000000 --price 17390
+```
+
+- 운용사 backtest hit15·표본 수 기반 Kelly criterion 계산
+- *1/4 Kelly + 단일 종목 상한 5%* 보수적 룰
+- 표본 작은 운용사 (n<30) 추가 80% 할인
+- 회피 운용사 (에이티넘) 입력 시 *진입 비추천* 명시
+
+`position add` 시 `--capital` 옵션 주면 자동으로 사이즈 적정 여부 검증.
+
 ### `notify` — 텔레그램 알림
 
 ```bash

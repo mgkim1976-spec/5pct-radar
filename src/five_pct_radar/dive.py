@@ -34,27 +34,59 @@ from .dart_client import dart_get
 # 출처: docs/STRATEGY_FINDINGS.md
 ACTOR_BACKTEST: dict[str, dict[str, Any]] = {
     "베어링자산운용": {"signal": "🟢 강한 매수", "hit15": 49, "mean": 5.1, "n": 70,
+                  "aliases": ["베어링", "Barings"],
                   "note": "누적 매수 시 안정, A1 exit 적합"},
     "브이아이피자산운용": {"signal": "🟢 매수", "hit15": 45, "mean": 5.2, "n": 192,
+                     "aliases": ["VIP", "브이아이피", "vip"],
                      "note": "최대 표본, 안정 양수"},
     "신영자산운용": {"signal": "🟡 약한 매수", "hit15": 44, "mean": 4.2, "n": 32,
+                "aliases": ["신영"],
                 "note": "최초 진입만 양수, 누적은 약함"},
     "한국투자밸류자산운용": {"signal": "🟡 약한 매수", "hit15": 44, "mean": 5.6, "n": 27,
+                      "aliases": ["한국투자밸류", "한투밸류"],
                       "note": "최초 진입 + A1"},
     "라이프자산운용": {"signal": "🟢 강한 매수 (소표본)", "hit15": 67, "mean": 12.6, "n": 12,
+                  "aliases": ["라이프"],
                   "note": "표본 작음, 통계 의의 약함"},
     "안다자산운용": {"signal": "🟢 매수 (소표본)", "hit15": 62, "mean": 12.6, "n": 8,
+                "aliases": ["안다"],
                 "note": "최초 매수만 강함"},
     "트러스톤자산운용": {"signal": "🟡 보통", "hit15": 35, "mean": 1.8, "n": 48,
+                  "aliases": ["트러스톤"],
                   "note": "누적 매수는 averaging down"},
     "에이티넘인베스트": {"signal": "🔴 회피", "hit15": 5, "mean": -10.7, "n": 20,
+                   "aliases": ["에이티넘"],
                    "note": "A1 적용해도 -11%"},
 }
+
+
+def match_actor(query: str) -> tuple[str | None, dict | None]:
+    """이름 또는 별칭으로 backtest 매칭. (canonical_name, backtest_dict) or (None, None)."""
+    if not query:
+        return None, None
+    q = query.strip()
+    for canonical, bt in ACTOR_BACKTEST.items():
+        if canonical in q or q in canonical:
+            return canonical, bt
+        for alias in bt.get("aliases", []):
+            if alias in q or q in alias:
+                return canonical, bt
+    return None, None
 
 # document.xml 매매내역 패턴
 _TRADE_RE = re.compile(
     r"(20\d{2}\.\d{2}\.\d{2})\s+(장내매수\(\+\)|장내매도\(-\))\s+의결권있는 주식\s+"
     r"([\d,]+)\s+(-?[\d,]+)\s+([\d,]+)\s+([\d,]+)"
+)
+
+# 잠정실적 공정공시 본문 패턴 — "매출액 당해실적 97,455 83,428 16.8 - 79,747 22.2"
+# (당기, 전기, 전기대비%, 전년동기, 전년동기대비%)
+_PRELIM_LINE_RE = re.compile(
+    r"(매출액|영업이익|법인세비용차감전계속사업이익|당기순이익|지배기업 소유주지분 순이익)\s+"
+    r"당해실적\s+([\d,]+)\s+([\d,]+)\s+(-?[\d.]+)\s+-?\s*([\d,]+)\s+(-?[\d.]+)"
+)
+_PRELIM_PERIOD_RE = re.compile(
+    r"당기실적\s+(\d{4}-\d{2}-\d{2})\s*~\s*(\d{4}-\d{2}-\d{2})"
 )
 
 
@@ -175,6 +207,61 @@ def fetch_document_text(rcept_no: str) -> str:
     return raw.decode("utf-8", errors="ignore")
 
 
+def parse_prelim_body(text: str) -> dict:
+    """잠정실적 공시 본문 파싱.
+
+    Returns:
+        {
+          "period_start": "2026-01-01", "period_end": "2026-03-31",
+          "rows": {
+            "매출액": {"this": 97455e6, "prev_q": 83428e6, "prev_q_pct": 16.8,
+                      "yoy": 79747e6, "yoy_pct": 22.2},
+            ...
+          }
+        }
+    """
+    if not text:
+        return {}
+    flat = re.sub(r"<[^>]+>", " ", text)
+    flat = re.sub(r"\s+", " ", flat)
+    out = {"rows": {}, "period_start": "", "period_end": ""}
+    m = _PRELIM_PERIOD_RE.search(flat)
+    if m:
+        out["period_start"], out["period_end"] = m.group(1), m.group(2)
+    for m in _PRELIM_LINE_RE.finditer(flat):
+        nm, this_v, prev_q, prev_q_pct, yoy, yoy_pct = m.groups()
+        try:
+            out["rows"][nm] = {
+                # 잠정실적 단위는 백만원 — 억원으로 환산
+                "this": int(this_v.replace(",", "")) / 100,
+                "prev_q": int(prev_q.replace(",", "")) / 100,
+                "prev_q_pct": float(prev_q_pct),
+                "yoy": int(yoy.replace(",", "")) / 100,
+                "yoy_pct": float(yoy_pct),
+            }
+        except (ValueError, TypeError):
+            continue
+    return out
+
+
+def fetch_prelim_with_data(corp_code: str, days: int = 365) -> tuple[dict | None, dict]:
+    """가장 최근 잠정실적 공시 + 본문 파싱.
+
+    Returns: (meta dict, parsed body)
+    """
+    prelims = fetch_prelim_disclosures(corp_code, days)
+    if not prelims:
+        return None, {}
+    # 가장 최근
+    latest = max(prelims, key=lambda x: x.get("rcept_dt", ""))
+    rcept_no = latest.get("rcept_no", "")
+    if not rcept_no:
+        return latest, {}
+    text = fetch_document_text(rcept_no)
+    body = parse_prelim_body(text)
+    return latest, body
+
+
 def parse_trades(text: str) -> list[dict]:
     """document.xml 본문에서 매매 내역 추출. → [{date, kind, qty, price}, ...]"""
     if not text:
@@ -292,9 +379,11 @@ def render_dive(stock_code: str) -> str:
     q_label = {"11013": "1Q", "11012": "반기", "11014": "3Q"}.get(q_reprt or "", "?")
     print(f"  ✓ 분기보고서 {q_year} {q_label}: {len(quarterly)} 계정")
 
-    print(f"[3/6] 잠정실적 공시 (최근 1년) ...")
+    print(f"[3/6] 잠정실적 공시 + 본문 파싱 ...")
+    prelim_meta, prelim_body = fetch_prelim_with_data(corp_code, 365)
     prelims = fetch_prelim_disclosures(corp_code, 365)
-    print(f"  ✓ {len(prelims)} 건")
+    n_prelim_rows = len(prelim_body.get("rows", {}))
+    print(f"  ✓ 공시 {len(prelims)} 건, 본문 {n_prelim_rows} 계정 추출")
 
     print(f"[4/6] 5%+ 신고 + 매매내역 파싱 ...")
     majorstock = fetch_majorstock(corp_code)
@@ -313,7 +402,8 @@ def render_dive(stock_code: str) -> str:
         stock_code=stock_code, corp_name=corp_name, corp_code=corp_code,
         company=company, annual_year=annual_year, annual=annual,
         q_year=q_year, q_label=q_label, quarterly=quarterly,
-        prelims=prelims, majorstock=majorstock, actor_data=actor_data,
+        prelims=prelims, prelim_meta=prelim_meta, prelim_body=prelim_body,
+        majorstock=majorstock, actor_data=actor_data,
         cur_price=cur_price, suffix=suffix, price_info=price_info,
         shares=shares, market_cap=market_cap,
     )
@@ -321,7 +411,8 @@ def render_dive(stock_code: str) -> str:
 
 
 def _build_markdown(*, stock_code, corp_name, corp_code, company, annual_year, annual,
-                    q_year, q_label, quarterly, prelims, majorstock, actor_data,
+                    q_year, q_label, quarterly, prelims, prelim_meta, prelim_body,
+                    majorstock, actor_data,
                     cur_price, suffix, price_info, shares, market_cap) -> str:
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     o: list[str] = []
@@ -380,8 +471,25 @@ def _build_markdown(*, stock_code, corp_name, corp_code, company, annual_year, a
             dr = annual["부채총계"]["thstrm"] / annual["자본총계"]["thstrm"] * 100 if annual["자본총계"]["thstrm"] else 0
             o.append(f"| **부채비율** | **{dr:.0f}%** | | |")
     o.append("")
-    if quarterly:
-        o.append(f"### 분기 ({q_year} {q_label} 보고서)")
+    # 잠정실적 본문 파싱 결과 우선 (가장 fresh)
+    if prelim_body and prelim_body.get("rows"):
+        pstart, pend = prelim_body.get("period_start",""), prelim_body.get("period_end","")
+        period_label = f"{pstart} ~ {pend}" if pstart else "잠정"
+        o.append(f"### 🔥 잠정실적 ({period_label}) — *가장 fresh*")
+        o.append("")
+        o.append(f"공시일: {prelim_meta.get('rcept_dt','')} · "
+                 f"rcept_no `{prelim_meta.get('rcept_no','')}`")
+        o.append("")
+        o.append("| 항목 | 당기 (억원) | 전년동기 (억원) | YoY |")
+        o.append("|---|---:|---:|---:|")
+        for nm in ["매출액", "영업이익", "당기순이익", "지배기업 소유주지분 순이익"]:
+            if nm in prelim_body["rows"]:
+                v = prelim_body["rows"][nm]
+                yoy = f"{v['yoy_pct']:+.1f}%"
+                o.append(f"| {nm} | {v['this']:,.0f} | {v['yoy']:,.0f} | **{yoy}** |")
+        o.append("")
+    elif quarterly:
+        o.append(f"### 분기 ({q_year} {q_label} 보고서) — *정식 분기 데이터*")
         o.append("")
         o.append("| 항목 | 당기 (억원) | 전기 (억원) | YoY |")
         o.append("|---|---:|---:|---:|")
@@ -390,11 +498,11 @@ def _build_markdown(*, stock_code, corp_name, corp_code, company, annual_year, a
                 v = quarterly[nm]
                 yoy = f"{(v['thstrm']/v['frmtrm']-1)*100:+.1f}%" if v['frmtrm'] else "-"
                 o.append(f"| {nm} | {v['thstrm']:,.0f} | {v['frmtrm']:,.0f} | {yoy} |")
-    o.append("")
+        o.append("")
 
-    # §4 잠정실적 공시
+    # §4 잠정실적 공시 목록 (히스토리)
     if prelims:
-        o.append("## §4. 잠정실적 공시 (최근 1년)")
+        o.append("## §4. 잠정실적 공시 목록 (최근 1년)")
         o.append("")
         o.append("| 공시일 | 보고서명 | rcept_no |")
         o.append("|---|---|---|")
@@ -410,18 +518,43 @@ def _build_markdown(*, stock_code, corp_name, corp_code, company, annual_year, a
         cap_won = annual["자본총계"]["thstrm"]  # 억원
         pbr = market_cap / cap_won if cap_won else 0
         o.append(f"- **PBR** = 시총 {market_cap:,.0f}억 / 자본 {cap_won:,.0f}억 = **{pbr:.2f}배**")
+
+    # PER 1: 연간 사업보고서 (LTM)
     if annual and "당기순이익" in annual and shares and cur_price:
         ni = annual["당기순이익"]["thstrm"] * 1e8  # 원
-        eps = ni / shares
-        per = cur_price / eps if eps else 0
-        o.append(f"- **PER (연간 기준)** = {cur_price:,.0f}원 / EPS {eps:,.0f}원 = **{per:.1f}배**")
-    if quarterly and "당기순이익" in quarterly and shares and cur_price:
-        # 분기 연환산
+        if ni > 0:
+            eps = ni / shares
+            per = cur_price / eps if eps else 0
+            o.append(f"- **PER (연간 사업보고서 {annual_year})** = {cur_price:,.0f}원 / EPS {eps:,.0f}원 = **{per:.1f}배**")
+
+    # PER 2: 잠정실적 분기 연환산 (가장 fresh)
+    if prelim_body and prelim_body.get("rows") and shares and cur_price:
+        rows = prelim_body["rows"]
+        # 지배지분 우선, 없으면 당기순이익
+        if "지배기업 소유주지분 순이익" in rows:
+            ni_q = rows["지배기업 소유주지분 순이익"]["this"] * 1e8
+            label = "지배순이익"
+        elif "당기순이익" in rows:
+            ni_q = rows["당기순이익"]["this"] * 1e8
+            label = "당기순이익"
+        else:
+            ni_q = 0
+            label = ""
+        if ni_q > 0:
+            annualized = ni_q * 4
+            eps_q = annualized / shares
+            per_q = cur_price / eps_q if eps_q else 0
+            period = prelim_body.get("period_end", "")[:7]
+            o.append(f"- **PER (잠정 {period} {label} ×4 연환산)** = {cur_price:,.0f}원 / EPS {eps_q:,.0f}원 = **{per_q:.1f}배** ⭐ *가장 fresh*")
+
+    # PER 3: 정식 분기 (잠정 없을 때만)
+    if (not prelim_body or not prelim_body.get("rows")) and quarterly and "당기순이익" in quarterly and shares and cur_price:
         ni_q = quarterly["당기순이익"]["thstrm"] * 1e8
-        annualized = ni_q * 4  # 단순 ×4 (분기 가중치 무시)
-        eps_q = annualized / shares
-        per_q = cur_price / eps_q if eps_q else 0
-        o.append(f"- **PER (분기 연환산)** = {cur_price:,.0f}원 / EPS {eps_q:,.0f}원 = **{per_q:.1f}배** *(분기 ×4 단순 연환산)*")
+        if ni_q > 0:
+            annualized = ni_q * 4
+            eps_q = annualized / shares
+            per_q = cur_price / eps_q if eps_q else 0
+            o.append(f"- **PER ({q_year} {q_label} ×4 연환산)** = {cur_price:,.0f}원 / EPS {eps_q:,.0f}원 = **{per_q:.1f}배**")
     o.append("")
 
     # §6 운용사 매매 내역 + 가중평균 단가
