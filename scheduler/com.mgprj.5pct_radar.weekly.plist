@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.mgprj.5pct_radar.weekly</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/mg_mac/MGPrj/5pct-radar/scheduler/run_weekly.sh</string>
+    </array>
+
+    <!-- 일요일 03:00 — corp_code + 10년 lifecycle backtest 갱신 -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key><integer>0</integer>
+        <key>Hour</key><integer>3</integer>
+        <key>Minute</key><integer>0</integer>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/mg_mac/MGPrj/5pct-radar/logs/launchd_weekly_stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/mg_mac/MGPrj/5pct-radar/logs/launchd_weekly_stderr.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/mg_mac/.pyenv/shims:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>HOME</key>
+        <string>/Users/mg_mac</string>
+    </dict>
+</dict>
+</plist>

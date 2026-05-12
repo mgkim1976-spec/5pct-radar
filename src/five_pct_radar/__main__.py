@@ -414,7 +414,7 @@ def main():
                    help="DART corpCode.xml 다운로드 → corp_code 매핑 빌드 (분기 1회)")
     # 배치 모드 (P1)
     p.add_argument("--scan-recent", type=int, metavar="DAYS",
-                   help="최근 N일 *모든* 5%+ 신고 일괄 분석 (KOSPI+KOSDAQ+KONEX)")
+                   help="최근 N일 *모든* 5%%+ 신고 일괄 분석 (KOSPI+KOSDAQ+KONEX)")
     p.add_argument("--max-filings", type=int, default=None,
                    help="배치 시 처리 최대 건수 (비용 통제용)")
     p.add_argument("--market", choices=["Y", "K", "N"], default=None,
@@ -426,14 +426,12 @@ def main():
                    help="기존 분석된 신고의 후속 공시 timeline (180일 기본)")
     p.add_argument("--chain-window", type=int, default=180,
                    help="catalyst chain 추적 기간 (일, default 180)")
-    p.add_argument("--deep-dive-lite", metavar="STOCK_CODE",
-                   help="단일 종목 간이 deep dive (회사+최대주주+자회사+5%+ history+catalyst chain)")
     p.add_argument("--actor-ranking", type=int, metavar="DAYS",
-                   help="지난 N일 5%+ 신고 운용사·보고자별 ranking (LLM 호출 없음)")
+                   help="지난 N일 5%%+ 신고 운용사·보고자별 ranking (LLM 호출 없음)")
     p.add_argument("--actor-top-n", type=int, default=20,
                    help="ranking 표시 상위 N (default 20)")
     p.add_argument("--backtest-actor", type=int, metavar="DAYS",
-                   help="지난 N일 운용사별 5%+ 신고 follow-alpha backtest (pykrx 필요)")
+                   help="지난 N일 운용사별 5%%+ 신고 follow-alpha backtest (pykrx 필요)")
     p.add_argument("--backtest-horizon", default="d365",
                    choices=["d30", "d90", "d180", "d365"],
                    help="backtest 시점 (default d365)")
@@ -465,12 +463,6 @@ def main():
             print(f"⚠️ rcept_no={args.chain} 는 인덱스에 없거나 corp_code 매핑 실패")
             sys.exit(1)
         print(render_chain_markdown(chain))
-        sys.exit(0)
-
-    if args.deep_dive_lite:
-        from .deep_dive_lite import save_deep_dive_lite
-        path = save_deep_dive_lite(args.deep_dive_lite)
-        print(f"✅ 저장: {path}")
         sys.exit(0)
 
     if args.actor_ranking is not None:
