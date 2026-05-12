@@ -158,6 +158,36 @@ python -m five_pct_radar --self-test
 > 펀드 매니저급 워크플로 통합 — *"오늘 뭐해야 돼?"* 1줄 답 도구 모음.
 > 모든 명령어는 *과거 10년 backtest 결과 + 검증된 운용사 시그널* 기반.
 
+### `daily` — 통합 데일리 리포트 ⭐
+
+```bash
+python -m five_pct_radar daily               # 매일 한 번 실행 권장
+python -m five_pct_radar daily --max-dives 5 # 최대 5건 dive (기본 10)
+```
+
+오늘 한 번에 모든 것 통합 — *EXIT 알림 → 우선순위 ranking → 신규 시그널 → 내 포지션*:
+
+- §1. 🚨 **EXIT 알림** — 내 포지션 A1 트리거
+- §2. 🏆 **진입 우선순위 ranking** — STRONG/MEDIUM 후보 자동 dive + 정량 점수
+  - **종합 점수 + 항목별 정량 값** (PBR, 영업 YoY, 자기주식%, 부채%, 시총, 6M)
+  - **항목별 점수 매트릭스** (actor 50 + prelim 20 + PBR 15 + 자기주식 15 + 부채 3 + 가격 2 = 100점)
+  - **시그널 요약 + 1줄 thesis**
+  - 각 후보 상세 점수 분해 + 다음 단계 명령어
+- §3. 📡 신규 시그널 dashboard (today)
+- §4. 📊 내 포지션 현황
+- §5. 📈 통계 + 오늘의 1순위
+
+저장: `data/daily/daily_<YYYYMMDD>.md`
+
+### `rank` — 우선순위 ranking 단독 실행
+
+```bash
+python -m five_pct_radar rank
+python -m five_pct_radar rank --days 3 --min-score 20 --max-dives 5
+```
+
+`daily` 의 §2 만 단독 실행. 신규 시그널 → 자동 dive → 정량 점수 → ranking.
+
 ### `today` — 오늘 dashboard
 
 ```bash
@@ -244,8 +274,11 @@ python -m five_pct_radar notify
 ### 권장 cron 설정
 
 ```bash
-# 평일 09:30 (장 개장 직후) 와 15:30 (장 마감 직후) — 알림
-30 9,15 * * 1-5 cd ~/5pct-radar && python -m five_pct_radar notify
+# 평일 09:30 (장 개장 직후) — 통합 데일리 리포트 ⭐ (가장 권장)
+30 9 * * 1-5 cd ~/5pct-radar && python -m five_pct_radar daily >> data/daily.log 2>&1
+
+# 평일 15:30 (장 마감 직후) — 알림 (텔레그램)
+30 15 * * 1-5 cd ~/5pct-radar && python -m five_pct_radar notify
 
 # 매주 일요일 새벽 3시 — backtest + corp_code 매핑 자동 갱신
 0 3 * * 0 cd ~/5pct-radar && ./scripts/refresh_weekly.sh >> data/refresh.log 2>&1

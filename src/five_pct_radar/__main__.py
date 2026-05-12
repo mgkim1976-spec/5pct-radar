@@ -250,7 +250,7 @@ def self_test() -> bool:
     return all_ok
 
 
-SUBCOMMANDS = {"today", "dive", "position", "journal", "notify", "size"}
+SUBCOMMANDS = {"today", "dive", "position", "journal", "notify", "size", "rank", "daily"}
 
 
 def _dispatch_subcommand() -> bool:
@@ -358,6 +358,30 @@ def _dispatch_subcommand() -> bool:
         rec = recommend_size(a.actor, a.capital, a.price,
                              override_per_share_risk_pct=a.loss_pct)
         print(render_sizing(rec))
+        return True
+
+    if cmd == "rank":
+        from .rank import save_rank
+        ap = argparse.ArgumentParser(prog="radar rank")
+        ap.add_argument("--days", type=int, default=1, help="최근 N일 (기본 1)")
+        ap.add_argument("--min-score", type=int, default=30, help="shortlist 최저 점수 (기본 30)")
+        ap.add_argument("--max-dives", type=int, default=10, help="최대 dive 건수 (기본 10)")
+        a = ap.parse_args(rest)
+        path = save_rank(days=a.days, min_score=a.min_score, max_dives=a.max_dives)
+        print(f"\n✅ 저장: {path}\n")
+        print(path.read_text(encoding="utf-8"))
+        return True
+
+    if cmd == "daily":
+        from .daily import save_daily
+        ap = argparse.ArgumentParser(prog="radar daily")
+        ap.add_argument("--days", type=int, default=1)
+        ap.add_argument("--min-score", type=int, default=30)
+        ap.add_argument("--max-dives", type=int, default=10)
+        a = ap.parse_args(rest)
+        path = save_daily(days=a.days, min_score=a.min_score, max_dives=a.max_dives)
+        print(f"\n✅ 저장: {path}\n")
+        print(path.read_text(encoding="utf-8"))
         return True
 
     return False

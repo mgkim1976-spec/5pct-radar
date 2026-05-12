@@ -411,64 +411,79 @@ def estimate_shares_outstanding(majorstock: list[dict]) -> int:
     return 0
 
 
-def render_dive(stock_code: str) -> str:
-    """전체 dive 보고서 Markdown 렌더."""
+def gather_dive_data(stock_code: str, *, verbose: bool = True) -> dict:
+    """dive 모든 데이터 수집 → dict (render 없이).
+
+    rank·다른 자동화에서 *정량 점수 계산* 용.
+    """
     cm = _load_corp_map()
     info = cm.get(stock_code)
     if not info:
-        return f"⚠️ stock_code {stock_code} 매핑 실패 — `--build-corp-map` 먼저"
+        return {"error": f"stock_code {stock_code} 매핑 실패"}
     corp_code = info["corp_code"]
     corp_name = info["corp_name"]
 
-    print(f"[1/6] DART 회사 개요 ...")
-    company = fetch_company(corp_code)
-    print(f"  ✓ {company.get('corp_name','?')} (CEO {company.get('ceo_nm','?')})")
+    def log(msg):
+        if verbose: print(msg)
 
-    print(f"[2/6] 최신 재무 (사업보고서 + 분기) ...")
+    log(f"[1/6] DART 회사 개요 ...")
+    company = fetch_company(corp_code)
+    log(f"  ✓ {company.get('corp_name','?')} (CEO {company.get('ceo_nm','?')})")
+
+    log(f"[2/6] 최신 재무 (사업보고서 + 분기) ...")
     annual_year, annual_rows = latest_annual_financials(corp_code)
     annual = parse_financials(annual_rows) if annual_rows else {}
-    print(f"  ✓ 사업보고서 {annual_year}: {len(annual)} 계정")
+    log(f"  ✓ 사업보고서 {annual_year}: {len(annual)} 계정")
 
     q_year, q_reprt, q_rows = latest_quarterly_financials(corp_code)
     quarterly = parse_financials(q_rows) if q_rows else {}
     q_label = {"11013": "1Q", "11012": "반기", "11014": "3Q"}.get(q_reprt or "", "?")
-    print(f"  ✓ 분기보고서 {q_year} {q_label}: {len(quarterly)} 계정")
+    log(f"  ✓ 분기보고서 {q_year} {q_label}: {len(quarterly)} 계정")
 
-    print(f"[3/6] 잠정실적 공시 + 본문 파싱 ...")
+    log(f"[3/6] 잠정실적 공시 + 본문 파싱 ...")
     prelim_meta, prelim_body = fetch_prelim_with_data(corp_code, 365)
     prelims = fetch_prelim_disclosures(corp_code, 365)
     n_prelim_rows = len(prelim_body.get("rows", {}))
-    print(f"  ✓ 공시 {len(prelims)} 건, 본문 {n_prelim_rows} 계정 추출")
+    log(f"  ✓ 공시 {len(prelims)} 건, 본문 {n_prelim_rows} 계정 추출")
 
-    print(f"[4/6] 5%+ 신고 + 매매내역 파싱 ...")
+    log(f"[4/6] 5%+ 신고 + 매매내역 파싱 ...")
     majorstock = fetch_majorstock(corp_code)
-    print(f"  · 총 {len(majorstock)} 건. 본문 파싱 중...")
+    log(f"  · 총 {len(majorstock)} 건. 본문 파싱 중...")
     actor_data = analyze_actor_trades(majorstock)
-    print(f"  ✓ 보고자 {len(actor_data)} 명, 매매내역 추출 완료")
+    log(f"  ✓ 보고자 {len(actor_data)} 명, 매매내역 추출 완료")
 
-    print(f"[5/6] yfinance 가격 + 시총 + 자기주식 ...")
+    log(f"[5/6] yfinance 가격 + 시총 + 자기주식 ...")
     cur_price, suffix, price_info = yfinance_price(stock_code)
     shares = estimate_shares_outstanding(majorstock)
     market_cap = cur_price * shares / 1e8 if cur_price and shares else 0
     tes_qty, tes_bsis, tes_acqs, tes_dsps, tes_pct, tes_label = fetch_treasury_shares(corp_code, shares)
-    print(f"  ✓ 현재가 {cur_price:,.0f}원, 시총 {market_cap:,.0f}억원")
+    log(f"  ✓ 현재가 {cur_price:,.0f}원, 시총 {market_cap:,.0f}억원")
     if tes_qty > 0:
         pct_str = f"{tes_pct:.1f}%" if tes_pct is not None else "?%"
-        print(f"  · 자기주식 보유 {tes_qty:,}주 ({pct_str}, {tes_label}) — 직전 취득 {tes_acqs:,}주")
+        log(f"  · 자기주식 보유 {tes_qty:,}주 ({pct_str}, {tes_label}) — 직전 취득 {tes_acqs:,}주")
+
+    return {
+        "stock_code": stock_code, "corp_name": corp_name, "corp_code": corp_code,
+        "company": company,
+        "annual_year": annual_year, "annual": annual,
+        "q_year": q_year, "q_label": q_label, "quarterly": quarterly,
+        "prelim_meta": prelim_meta, "prelim_body": prelim_body, "prelims": prelims,
+        "majorstock": majorstock, "actor_data": actor_data,
+        "cur_price": cur_price, "suffix": suffix, "price_info": price_info,
+        "shares": shares, "market_cap": market_cap,
+        "tes_qty": tes_qty, "tes_bsis": tes_bsis, "tes_acqs": tes_acqs,
+        "tes_dsps": tes_dsps, "tes_pct": tes_pct, "tes_label": tes_label,
+    }
+
+
+def render_dive(stock_code: str) -> str:
+    """전체 dive 보고서 Markdown 렌더."""
+    d = gather_dive_data(stock_code)
+    if "error" in d:
+        return f"⚠️ {d['error']}"
 
     print(f"[6/6] 보고서 생성 ...")
-    md = _build_markdown(
-        stock_code=stock_code, corp_name=corp_name, corp_code=corp_code,
-        company=company, annual_year=annual_year, annual=annual,
-        q_year=q_year, q_label=q_label, quarterly=quarterly,
-        prelims=prelims, prelim_meta=prelim_meta, prelim_body=prelim_body,
-        majorstock=majorstock, actor_data=actor_data,
-        cur_price=cur_price, suffix=suffix, price_info=price_info,
-        shares=shares, market_cap=market_cap,
-        tes_qty=tes_qty, tes_bsis=tes_bsis, tes_acqs=tes_acqs, tes_dsps=tes_dsps,
-        tes_pct=tes_pct, tes_label=tes_label,
-    )
-    return md
+    return _build_markdown(**d)
 
 
 def _build_markdown(*, stock_code, corp_name, corp_code, company, annual_year, annual,
