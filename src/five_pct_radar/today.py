@@ -75,6 +75,20 @@ def score_filing(filing: dict) -> dict[str, Any]:
     # 운용사 매칭 (별칭 지원)
     _, backtest = match_actor(flr)
 
+    # 추가 시그널 — backtest unknown actor 라도 패턴으로 잡기
+    if not backtest:
+        # 외국계 패턴 (Capital, LLC, Fund, Investment, Management)
+        foreign_keywords = ["Capital", "LLC", "Fund", "Investment", "Management",
+                            "Partners", "Holdings", "Asset", "Hedge"]
+        is_foreign = any(kw in flr for kw in foreign_keywords)
+        if is_foreign:
+            score += 25
+            flags.append("🟡 외국계 패턴 (unknown backtest)")
+        # 신규 5%+ 신고 (일반) — 처음 진입 또는 ±1%p 변동
+        if "(일반)" in (filing.get("report_nm", "") or ""):
+            score += 10
+            flags.append("📋 일반보고 (신규 또는 변동)")
+
     if backtest:
         if "🟢 강한 매수" in backtest["signal"]:
             score += 50

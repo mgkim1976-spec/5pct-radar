@@ -366,8 +366,11 @@ def _dispatch_subcommand() -> bool:
         ap.add_argument("--days", type=int, default=1, help="최근 N일 (기본 1)")
         ap.add_argument("--min-score", type=int, default=30, help="shortlist 최저 점수 (기본 30)")
         ap.add_argument("--max-dives", type=int, default=10, help="최대 dive 건수 (기본 10)")
+        ap.add_argument("--include", default="",
+                        help="강제 포함할 stock_code (콤마 분리, 예: 039830,093050)")
         a = ap.parse_args(rest)
-        path = save_rank(days=a.days, min_score=a.min_score, max_dives=a.max_dives)
+        inc = [c.strip() for c in a.include.split(",") if c.strip()]
+        path = save_rank(days=a.days, min_score=a.min_score, max_dives=a.max_dives, include=inc)
         print(f"\n✅ 저장: {path}\n")
         print(path.read_text(encoding="utf-8"))
         return True

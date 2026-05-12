@@ -21,7 +21,7 @@ from pathlib import Path
 
 from .config import DATA_DIR
 from .dive import (
-    ACTOR_BACKTEST, gather_dive_data, match_actor,
+    ACTOR_BACKTEST, gather_dive_data, match_actor, _load_corp_map,
 )
 from .today import fetch_recent_5pct, score_filing
 
@@ -59,6 +59,19 @@ def score_candidate(dive_data: dict, filing_score: dict) -> dict:
     # filing 자체의 점수도 반영
     if filing_score and filing_score.get("score", 0) >= 60:
         bt_score = max(bt_score, 40)
+    # backtest unknown actor 라도 *대안 시그널* 반영
+    if bt_score == 0 and filing_score:
+        flags_str = " ".join(filing_score.get("flags", []) or [])
+        if "외국계 패턴" in flags_str:
+            bt_score = 15
+            flags.append("🟡 외국계 actor (backtest 없음, +15)")
+        if "잠정실적 발표 후" in flags_str:
+            bt_score = max(bt_score, 12)
+        if "일반보고" in flags_str:
+            bt_score = max(bt_score, 5)
+        # 본문 파싱한 actor_data 있으면 (검증 안 됨) 약한 보너스
+        if actor_data:
+            bt_score = max(bt_score, 8)
     breakdown["actor"] = min(50, bt_score)
     score += breakdown["actor"]
 
@@ -177,7 +190,8 @@ def score_candidate(dive_data: dict, filing_score: dict) -> dict:
     }
 
 
-def build_rank(days: int = 1, min_score: int = 30, max_dives: int = 10) -> tuple[str, list[dict]]:
+def build_rank(days: int = 1, min_score: int = 30, max_dives: int = 10,
+               include: list[str] | None = None) -> tuple[str, list[dict]]:
     """screen → dive → rank 통합 실행. (markdown, ranked_list)"""
     today_str = datetime.now().strftime("%Y-%m-%d %H:%M")
     o: list[str] = []
@@ -197,20 +211,40 @@ def build_rank(days: int = 1, min_score: int = 30, max_dives: int = 10) -> tuple
         s = score_filing(f)
         scored.append({**f, **s})
 
-    # shortlist: score ≥ min_score 또는 STRONG/MEDIUM
-    shortlist = [s for s in scored if s["score"] >= min_score]
-    # 중복 stock_code 제거 (가장 높은 점수만)
+    # shortlist: score ≥ min_score
+    shortlist_codes = set()
     by_code: dict[str, dict] = {}
-    for s in shortlist:
+    for s in scored:
         code = s.get("stock_code", "")
         if not code:
             continue
         if code not in by_code or s["score"] > by_code[code]["score"]:
             by_code[code] = s
-    shortlist = list(by_code.values())
+    # 자동 shortlist
+    for code, s in by_code.items():
+        if s["score"] >= min_score:
+            shortlist_codes.add(code)
+    # --include 강제 포함
+    cm = _load_corp_map()
+    for code in include or []:
+        code = code.strip()
+        if not code:
+            continue
+        shortlist_codes.add(code)
+        if code not in by_code:
+            # 오늘 신고 없는 종목 — placeholder
+            info = cm.get(code, {})
+            by_code[code] = {
+                "stock_code": code,
+                "corp_name": info.get("corp_name", code),
+                "flr_nm": "(--include)",
+                "score": 0, "priority": "—", "flags": ["📌 사용자 지정"],
+                "backtest": None,
+            }
+    shortlist = [by_code[c] for c in shortlist_codes]
     shortlist.sort(key=lambda s: -s["score"])
     shortlist = shortlist[:max_dives]
-    print(f"  ✓ shortlist {len(shortlist)}건 (score ≥ {min_score})")
+    print(f"  ✓ shortlist {len(shortlist)}건 (score ≥ {min_score}, +include {len(include or [])})")
 
     if not shortlist:
         o.append("*(shortlist 없음 — 검증된 운용사 시그널 0건)*")
@@ -325,8 +359,9 @@ def build_rank(days: int = 1, min_score: int = 30, max_dives: int = 10) -> tuple
     return "\n".join(o), ranked
 
 
-def save_rank(days: int = 1, min_score: int = 30, max_dives: int = 10) -> Path:
-    md, ranked = build_rank(days=days, min_score=min_score, max_dives=max_dives)
+def save_rank(days: int = 1, min_score: int = 30, max_dives: int = 10,
+              include: list[str] | None = None) -> Path:
+    md, ranked = build_rank(days=days, min_score=min_score, max_dives=max_dives, include=include)
     RANK_DIR.mkdir(parents=True, exist_ok=True)
     today_str = datetime.now().strftime("%Y%m%d")
     path = RANK_DIR / f"rank_{today_str}.md"
