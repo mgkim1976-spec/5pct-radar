@@ -86,7 +86,12 @@
 - 🗑️ `scripts/refresh_weekly.sh` → `scheduler/run_weekly.sh`
 - 📁 `scheduler/` 폴더 신설 (launchd plist + run scripts)
 - 📁 `logs/` 폴더 신설
-- 📄 `README.md` 단순화 (580줄 → ~150줄)
+- 📄 `README.md` 단순화 (580줄 → ~200줄)
+- 🏗️ **모듈 그룹화** — 26개 평탄 모듈 → 4 하위 패키지:
+  - `core/` (3): dart_client, corp_code, fetch_filing
+  - `analysis/` (8): classify, extract_llm, grounding, resolve_filer, scan, catalyst_chain, report, score_filing
+  - `backtest/` (5): lifecycle_monitor, backtest_actor, backtest_phase0, actor_stats, score_model
+  - `workflow/` (10): daily, today, dive, rank, holdings, movements, position, sizing, journal, notify
 
 ---
 

@@ -18,7 +18,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from .config import DATA_DIR
+from ..config import DATA_DIR
 
 
 def _load_yesterday_json(today: datetime, days_back_max: int = 7) -> tuple[list[dict], str]:

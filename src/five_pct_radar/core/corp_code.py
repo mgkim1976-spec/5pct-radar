@@ -7,8 +7,8 @@ from __future__ import annotations
 import json
 import xml.etree.ElementTree as ET
 
-from .config import CORP_MAP_FILE
-from .dart_client import dart_fetch_zip
+from ..config import CORP_MAP_FILE
+from ..core.dart_client import dart_fetch_zip
 
 
 def build_corp_code_map() -> None:

@@ -20,8 +20,8 @@ import json
 import re
 from typing import Any
 
-from .config import CORP_MAP_FILE
-from .dart_client import dart_get
+from ..config import CORP_MAP_FILE
+from ..core.dart_client import dart_get
 
 
 _NORMALIZE_RE = re.compile(

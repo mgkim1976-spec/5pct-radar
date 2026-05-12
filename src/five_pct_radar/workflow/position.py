@@ -23,7 +23,7 @@ from typing import Any
 
 import yfinance as yf
 
-from .config import CORP_MAP_FILE, DATA_DIR
+from ..config import CORP_MAP_FILE, DATA_DIR
 
 POSITIONS_FILE = DATA_DIR / "positions.json"
 CLOSED_FILE = DATA_DIR / "positions_closed.json"

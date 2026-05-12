@@ -14,7 +14,7 @@ from typing import Any
 from google import genai
 from google.genai import types
 
-from .config import GEMINI_API_KEY
+from ..config import GEMINI_API_KEY
 
 
 GEMINI_MODEL = "gemini-2.5-pro"

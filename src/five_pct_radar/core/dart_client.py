@@ -12,7 +12,7 @@ from typing import Any
 
 import requests
 
-from .config import DART_API_KEY
+from ..config import DART_API_KEY
 
 
 _SESSION = requests.Session()

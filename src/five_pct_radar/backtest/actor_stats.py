@@ -15,8 +15,8 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Any
 
-from .config import FILING_INTEL_DIR
-from .dart_client import dart_get
+from ..config import FILING_INTEL_DIR
+from ..core.dart_client import dart_get
 
 
 # 보고자 분류 키워드 (activist-scout domain.py 패턴 간소화)

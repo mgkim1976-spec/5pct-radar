@@ -26,8 +26,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from .actor_stats import classify_actor, fetch_filings_window, normalize_actor_name
-from .config import FILING_INTEL_DIR
+from ..backtest.actor_stats import classify_actor, fetch_filings_window, normalize_actor_name
+from ..config import FILING_INTEL_DIR
 
 
 # KOSPI 추적용 ETF — KODEX 200 (069500). KOSPI 종합지수 자체는

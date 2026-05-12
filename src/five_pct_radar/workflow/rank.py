@@ -19,11 +19,11 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from .config import DATA_DIR
-from .dive import (
+from ..config import DATA_DIR
+from ..workflow.dive import (
     ACTOR_BACKTEST, gather_dive_data, match_actor, _load_corp_map,
 )
-from .today import fetch_recent_5pct, score_filing
+from ..workflow.today import fetch_recent_5pct, score_filing
 
 RANK_DIR = DATA_DIR / "rank"
 

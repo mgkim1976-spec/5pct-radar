@@ -8,13 +8,13 @@ Fractional Kelly 변형:
   - 표본 작으면 (n < 30) 추가 80% 할인
 
 사용:
-  from .sizing import recommend_size
+  from ..workflow.sizing import recommend_size
   rec = recommend_size("브이아이피자산운용", capital_won=100_000_000, price=17390)
   print(rec)  # {kelly_fraction, recommended_pct, recommended_won, shares, ...}
 """
 from __future__ import annotations
 
-from .dive import ACTOR_BACKTEST, match_actor
+from ..workflow.dive import ACTOR_BACKTEST, match_actor
 
 # 안전 한도
 MAX_SINGLE_POSITION_PCT = 5.0  # 단일 종목 최대 5%

@@ -13,10 +13,10 @@ import json
 from datetime import datetime
 from typing import Any
 
-from .actor_stats import classify_actor, normalize_actor_name
-from .config import CORP_MAP_FILE, FILING_INTEL_DIR
-from .fetch_filing import list_majorstock
-from .score_model import compute_follow_trade_score
+from ..backtest.actor_stats import classify_actor, normalize_actor_name
+from ..config import CORP_MAP_FILE, FILING_INTEL_DIR
+from ..core.fetch_filing import list_majorstock
+from ..backtest.score_model import compute_follow_trade_score
 
 
 def _i(s: Any) -> int:
@@ -125,7 +125,7 @@ def score_single_filing(
     buy_avg = None
     current_price = 0.0
     try:
-        from .backtest_phase0 import _fundamentals_cache, fetch_fundamentals_yf
+        from ..backtest.backtest_phase0 import _fundamentals_cache, fetch_fundamentals_yf
         # yfinance .history 로 현재가 + 그동안 신고일 가격으로 buy_avg
         import yfinance as yf  # type: ignore
 
@@ -168,7 +168,7 @@ def score_single_filing(
 
     # 종목 fundamentals
     try:
-        from .backtest_phase0 import fetch_fundamentals_yf
+        from ..backtest.backtest_phase0 import fetch_fundamentals_yf
         funds = fetch_fundamentals_yf(stock_code)
     except Exception:
         funds = {"pbr": None, "roe_pct": None, "debt_to_equity": None, "current_ratio": None}

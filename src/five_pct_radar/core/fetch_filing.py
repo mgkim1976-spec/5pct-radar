@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from .dart_client import dart_get, dart_fetch_zip
+from ..core.dart_client import dart_get, dart_fetch_zip
 
 
 def list_majorstock(corp_code: str) -> list[dict[str, Any]]:

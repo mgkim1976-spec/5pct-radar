@@ -18,8 +18,8 @@ import json
 from datetime import datetime, timedelta
 from typing import Any
 
-from .config import FILING_INTEL_DIR
-from .dart_client import dart_get
+from ..config import FILING_INTEL_DIR
+from ..core.dart_client import dart_get
 
 
 # 후속 공시 카테고리 (보고서명 키워드 매칭)
@@ -194,7 +194,7 @@ def build_chain_for_rcept_no(rcept_no: str, *, window_days: int = 180) -> dict[s
         return None
 
     # stock_code → corp_code
-    from .config import CORP_MAP_FILE
+    from ..config import CORP_MAP_FILE
     cm = json.loads(CORP_MAP_FILE.read_text(encoding="utf-8"))
     info = cm.get(stock_code)
     if not info:

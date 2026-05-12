@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from .config import DATA_DIR
+from ..config import DATA_DIR
 
 CLOSED_FILE = DATA_DIR / "positions_closed.json"
 

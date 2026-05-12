@@ -181,8 +181,6 @@ OBSIDIAN_DIR=...        # 옵션 (default: ~/Library/.../theme_radar/5pct_radar)
 
 ## 6. 알려진 Gap
 
-- [ ] **모듈 그룹화** — 27개 평탄 모듈을 `core/workflow/analysis/backtest/` 4개 하위 패키지로 (추후)
-- [ ] **launchd plist** — cron 대신 macOS 표준 사용 (현재는 cron 가이드만)
 - [ ] **`specs/requested_fields.json`** — JSON schema 형식 (현재 SPECIFICATIONS 텍스트만)
 - [ ] **history tracking** — 어제 vs 오늘 ranking 점수 변화 추적
 - [ ] **`radar daily` 도 Obsidian 미러** — 현재 `holdings` 만

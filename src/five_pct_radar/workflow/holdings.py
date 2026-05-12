@@ -28,8 +28,8 @@ from pathlib import Path
 
 import yfinance as yf
 
-from .config import CORP_MAP_FILE, DATA_DIR, OBSIDIAN_DIR
-from .dive import ACTOR_BACKTEST, match_actor, fetch_majorstock, estimate_shares_outstanding
+from ..config import CORP_MAP_FILE, DATA_DIR, OBSIDIAN_DIR
+from ..workflow.dive import ACTOR_BACKTEST, match_actor, fetch_majorstock, estimate_shares_outstanding
 
 HOLDINGS_DIR = DATA_DIR / "holdings"
 
@@ -318,7 +318,7 @@ def save_holdings(lifecycle_path: Path | None = None, *,
                           encoding="utf-8")
 
     print(f"[3/5] daily 변동 (어제 vs 오늘) ...")
-    from .movements import detect_movements_from_today, render_movements
+    from ..workflow.movements import detect_movements_from_today, render_movements
     movements, _, y_date = detect_movements_from_today(data["all"])
     movements_md = render_movements(movements, today_iso, y_date)
     movements_path = HOLDINGS_DIR / f"movements_{today_str}.md"
@@ -336,7 +336,7 @@ def save_holdings(lifecycle_path: Path | None = None, *,
     auto_dive_results = []
     if auto_dive and y_date:
         print(f"[4/5] 변동 종목 자동 dive ...")
-        from .dive import save_dive
+        from ..workflow.dive import save_dive
         # 우선순위: 신규 > 비중 증가
         priority_codes: list[tuple[str, str, str]] = []  # (code, reason, actor)
         seen = set()

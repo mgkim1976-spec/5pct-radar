@@ -116,6 +116,49 @@ baseline (filing follow 무차별) 25% 대비 *베어링 +24%p, VIP +20%p*.
 
 ---
 
+## 🏗️ 코드 구조
+
+```
+src/five_pct_radar/
+├── __init__.py / __main__.py / config.py    # CLI + 설정
+│
+├── core/         # 데이터 fetcher 공용
+│   ├── dart_client.py        # DART OpenAPI client
+│   ├── corp_code.py          # corp_code 매핑
+│   └── fetch_filing.py       # document.xml 파싱
+│
+├── analysis/     # 시그널 분석·LLM
+│   ├── classify.py           # 시나리오 분류
+│   ├── extract_llm.py        # Gemini structured
+│   ├── grounding.py          # Google grounding
+│   ├── resolve_filer.py      # 보고자 그룹 매핑
+│   ├── scan.py               # 배치 모드
+│   ├── catalyst_chain.py     # 후속 공시 추적
+│   ├── report.py             # 단일 신고 보고서
+│   └── score_filing.py       # 단일 신고 점수
+│
+├── backtest/     # backtest·통계
+│   ├── lifecycle_monitor.py  # 10년 lifecycle backtest
+│   ├── backtest_actor.py     # 운용사 backtest
+│   ├── backtest_phase0.py    # Phase 0 검증
+│   ├── actor_stats.py        # 운용사 ranking
+│   └── score_model.py        # 5-component 점수
+│
+└── workflow/     # 매일 명령어 (CLI subcommands)
+    ├── daily.py              # 통합 데일리
+    ├── today.py              # 오늘 신고 dashboard
+    ├── dive.py               # 단일 종목 deep dive
+    ├── rank.py               # 우선순위 매트릭스
+    ├── holdings.py           # 운용사 보유 모니터링
+    ├── movements.py          # 어제 vs 오늘 변동
+    ├── position.py           # 포지션 tracker
+    ├── sizing.py             # Kelly 사이즈
+    ├── journal.py            # 사후 회고
+    └── notify.py             # 텔레그램
+```
+
+---
+
 ## 📄 라이선스
 
 MIT — [LICENSE](LICENSE)

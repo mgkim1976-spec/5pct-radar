@@ -10,8 +10,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from .config import FILING_INTEL_DIR
-from .dart_client import dart_get
+from ..config import FILING_INTEL_DIR
+from ..core.dart_client import dart_get
 
 
 def fetch_recent_filings(days: int = 1) -> list[dict[str, Any]]:

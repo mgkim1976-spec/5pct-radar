@@ -5,7 +5,7 @@
   TELEGRAM_CHAT_ID=...
 
 사용:
-  from .notify import send_telegram
+  from ..workflow.notify import send_telegram
   send_telegram("EXIT 알림: 037460 +62.8%")
 
 토큰 미설정 시 stdout 으로 fallback (warn).
@@ -17,7 +17,7 @@ import sys
 
 import requests
 
-from .config import _load_env, ROOT_DIR
+from ..config import _load_env, ROOT_DIR
 
 _load_env(ROOT_DIR / ".env")
 
@@ -43,5 +43,5 @@ def send_telegram(text: str) -> bool:
 
 def send_today_summary() -> bool:
     """오늘 dashboard 요약을 텔레그램으로."""
-    from .today import get_alerts_summary
+    from ..workflow.today import get_alerts_summary
     return send_telegram(get_alerts_summary())

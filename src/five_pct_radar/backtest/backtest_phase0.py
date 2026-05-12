@@ -17,8 +17,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from .config import CORP_MAP_FILE, FILING_INTEL_DIR
-from .score_model import compute_follow_trade_score
+from ..config import CORP_MAP_FILE, FILING_INTEL_DIR
+from ..backtest.score_model import compute_follow_trade_score
 
 
 def _yf_ticker(stock_code: str, corp_cls: str = "Y") -> str:

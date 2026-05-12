@@ -26,8 +26,8 @@ from typing import Any
 
 import yfinance as yf
 
-from .config import CORP_MAP_FILE, DATA_DIR, FILING_INTEL_DIR
-from .dart_client import dart_get
+from ..config import CORP_MAP_FILE, DATA_DIR, FILING_INTEL_DIR
+from ..core.dart_client import dart_get
 
 
 # 운용사 backtest 결과 (lifecycle 10년 + A1 exit 기준)
@@ -243,7 +243,7 @@ def fetch_treasury_shares(corp_code: str, shares_outstanding: int = 0) -> tuple[
 
 def fetch_document_text(rcept_no: str) -> str:
     """document.xml ZIP 다운로드 + 본문 텍스트 추출."""
-    from .dart_client import dart_fetch_zip
+    from ..core.dart_client import dart_fetch_zip
     zf = dart_fetch_zip("document.xml", {"rcept_no": rcept_no})
     if not zf:
         return ""

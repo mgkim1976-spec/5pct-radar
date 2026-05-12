@@ -18,10 +18,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from . import classify, extract_llm, fetch_filing, grounding, report
+from .analysis import classify, extract_llm, grounding, report
+from .core import fetch_filing
 from .config import CORP_MAP_FILE, DATA_DIR, FILING_INTEL_DIR
-from .corp_code import build_corp_code_map
-from .resolve_filer import resolve
+from .core.corp_code import build_corp_code_map
+from .analysis.resolve_filer import resolve
 
 
 def _extract_stock_code_from_text(text: str) -> str | None:
@@ -144,7 +145,7 @@ def run_one(rcept_no: str, stock_code: str | None = None, *, do_grounding: bool 
     # 7b. Follow-Trade Score 계산 (Phase 1)
     score_card = None
     try:
-        from .score_filing import score_single_filing, render_score_card
+        from .analysis.score_filing import score_single_filing, render_score_card
         ftscore = score_single_filing(
             rcept_no=rcept_no,
             stock_code=stock_code or "",
@@ -261,7 +262,7 @@ def _dispatch_subcommand() -> bool:
     rest = sys.argv[2:]
 
     if cmd == "today":
-        from .today import save_today
+        from .workflow.today import save_today
         path = save_today()
         print(f"\n✅ 저장: {path}\n")
         print(path.read_text(encoding="utf-8"))
@@ -271,13 +272,13 @@ def _dispatch_subcommand() -> bool:
         if not rest:
             print("usage: radar dive <stock_code>")
             sys.exit(2)
-        from .dive import save_dive
+        from .workflow.dive import save_dive
         path = save_dive(rest[0])
         print(f"\n✅ 저장: {path}")
         return True
 
     if cmd == "position":
-        from . import position as pos_mod
+        from .workflow import position as pos_mod
         sub = rest[0] if rest else "list"
         args = rest[1:]
         if sub == "add":
@@ -297,7 +298,7 @@ def _dispatch_subcommand() -> bool:
             print(f"   익절 {p['take_profit']:,}원 / 손절 {p['stop_loss']:,}원")
             # 사이즈 검증 (자본 지정 시)
             if a.actor and a.capital > 0:
-                from .sizing import recommend_size
+                from .workflow.sizing import recommend_size
                 rec = recommend_size(a.actor, a.capital, a.price)
                 if rec.get("matched") and rec.get("recommended_pct"):
                     actual_pct = (a.shares * a.price) / a.capital * 100
@@ -330,7 +331,7 @@ def _dispatch_subcommand() -> bool:
         return True
 
     if cmd == "journal":
-        from .journal import save_review
+        from .workflow.journal import save_review
         sub = rest[0] if rest else "review"
         if sub == "review":
             path = save_review()
@@ -342,13 +343,13 @@ def _dispatch_subcommand() -> bool:
         return True
 
     if cmd == "notify":
-        from .notify import send_today_summary
+        from .workflow.notify import send_today_summary
         ok = send_today_summary()
         print("✅ 알림 전송 성공" if ok else "⚠️ 텔레그램 미설정 또는 실패 — 위 출력 참조")
         return True
 
     if cmd == "size":
-        from .sizing import recommend_size, render_sizing
+        from .workflow.sizing import recommend_size, render_sizing
         ap = argparse.ArgumentParser(prog="radar size")
         ap.add_argument("--actor", required=True, help="follow 할 운용사")
         ap.add_argument("--capital", type=float, required=True, help="총 자본 (원)")
@@ -361,7 +362,7 @@ def _dispatch_subcommand() -> bool:
         return True
 
     if cmd == "rank":
-        from .rank import save_rank
+        from .workflow.rank import save_rank
         ap = argparse.ArgumentParser(prog="radar rank")
         ap.add_argument("--days", type=int, default=1, help="최근 N일 (기본 1)")
         ap.add_argument("--min-score", type=int, default=30, help="shortlist 최저 점수 (기본 30)")
@@ -376,7 +377,7 @@ def _dispatch_subcommand() -> bool:
         return True
 
     if cmd == "daily":
-        from .daily import save_daily
+        from .workflow.daily import save_daily
         ap = argparse.ArgumentParser(prog="radar daily")
         ap.add_argument("--days", type=int, default=1)
         ap.add_argument("--min-score", type=int, default=30)
@@ -388,7 +389,7 @@ def _dispatch_subcommand() -> bool:
         return True
 
     if cmd == "holdings":
-        from .holdings import save_holdings
+        from .workflow.holdings import save_holdings
         path = save_holdings()
         print(f"\n✅ 저장: {path}\n")
         print(path.read_text(encoding="utf-8"))
@@ -452,12 +453,12 @@ def main():
         sys.exit(0 if ok else 1)
 
     if args.summary:
-        from .scan import summarize_recent
+        from .analysis.scan import summarize_recent
         print(summarize_recent())
         sys.exit(0)
 
     if args.chain:
-        from .catalyst_chain import build_chain_for_rcept_no, render_chain_markdown
+        from .analysis.catalyst_chain import build_chain_for_rcept_no, render_chain_markdown
         chain = build_chain_for_rcept_no(args.chain, window_days=args.chain_window)
         if chain is None:
             print(f"⚠️ rcept_no={args.chain} 는 인덱스에 없거나 corp_code 매핑 실패")
@@ -466,27 +467,27 @@ def main():
         sys.exit(0)
 
     if args.actor_ranking is not None:
-        from .actor_stats import save_actor_ranking
+        from .backtest.actor_stats import save_actor_ranking
         save_actor_ranking(days=args.actor_ranking, top_n=args.actor_top_n)
         sys.exit(0)
 
     if args.backtest_actor is not None:
-        from .backtest_actor import run_actor_backtest
+        from .backtest.backtest_actor import run_actor_backtest
         run_actor_backtest(days=args.backtest_actor, horizon=args.backtest_horizon)
         sys.exit(0)
 
     if args.lifecycle is not None:
-        from .lifecycle_monitor import run_lifecycle_backtest
+        from .backtest.lifecycle_monitor import run_lifecycle_backtest
         run_lifecycle_backtest(days=args.lifecycle, max_filings=args.lifecycle_max_filings)
         sys.exit(0)
 
     if args.phase0:
-        from .backtest_phase0 import run_phase0
+        from .backtest.backtest_phase0 import run_phase0
         run_phase0(Path(args.phase0))
         sys.exit(0)
 
     if args.scan_recent is not None:
-        from .scan import scan_recent
+        from .analysis.scan import scan_recent
         paths, stats = scan_recent(
             days=args.scan_recent,
             max_filings=args.max_filings,
