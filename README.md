@@ -153,6 +153,89 @@ python -m five_pct_radar --self-test
 
 ---
 
+## 4.5. 매일 쓰는 명령어 (Daily Ops)
+
+> 펀드 매니저급 워크플로 통합 — *"오늘 뭐해야 돼?"* 1줄 답 도구 모음.
+> 모든 명령어는 *과거 10년 backtest 결과 + 검증된 운용사 시그널* 기반.
+
+### `today` — 오늘 dashboard
+
+```bash
+python -m five_pct_radar today
+```
+
+오늘 들어온 5%+ 신고를 검증된 운용사·점수 기준으로 정렬한 dashboard:
+- **🟢 STRONG / 🟡 MEDIUM / 🔴 AVOID / ⚪ IGNORE** 4단계 분류
+- 베어링·VIP·신영·한국투자밸류 등 *backtest 검증된 매수 시그널*
+- 잠정실적 발표 후 30일 내 매수 = *Fresh polarity* 자동 보너스
+- 내 포지션의 A1 익절/손절 트리거 동시 표시
+- 저장: `data/today/today_<YYYYMMDD>.md`
+
+### `dive <종목코드>` — 단일 종목 즉시 deep dive
+
+```bash
+python -m five_pct_radar dive 039830
+```
+
+screening 통과 여부와 *무관하게* 모든 종목에 동작. 약 30초 내:
+- DART 회사 개요·최신 재무 (사업보고서 + 분기) 자동 탐색
+- 잠정실적 공시 목록 (최근 1년)
+- 5%+ 신고 전체에서 *운용사별 매수/매도 timeline + 가중평균 단가*
+- `매수 가중평균 / 순매집 실효단가 / 가장 최근 매수가` 3종 비교
+- backtest 운용사 라벨 (hit15, mean, n) 자동 매칭
+- A1 권장 진입가 + 익절/손절 (`현재가 ±20%/-10%`)
+- 저장: `data/filing_intel/dive_<code>_<YYYYMMDD>.md`
+
+### `position` — 내 포지션 tracker
+
+```bash
+# 진입 기록 (오로라 17,390원에 100주 매수, VIP follow)
+python -m five_pct_radar position add 039830 \
+    --price 17390 --shares 100 \
+    --actor "VIP" --note "VIP 4/30 폭매수 후 follow. 1Q 영업+45.9%"
+
+# 현재 포지션 + A1 트리거 (yfinance 실시간 가격)
+python -m five_pct_radar position list
+
+# 청산 기록 (사후 회고용으로 보관)
+python -m five_pct_radar position close 039830 --price 21000 \
+    --note "A1 익절 도달, 매도"
+
+# 메모 추가 (§13 사람 검증 답변 등)
+python -m five_pct_radar position note 039830 "노씨 일가 합산 지분 확인 필요"
+```
+
+저장: `data/positions.json` (OPEN), `data/positions_closed.json` (청산)
+
+### `journal review` — 사후 회고 통계
+
+```bash
+python -m five_pct_radar journal review
+```
+
+청산된 포지션의 *내 가설 vs 실제 결과* 비교:
+- 전체 승률 / hit15 / 평균 수익률 / 평균 보유일
+- *follow 한 운용사별* 통계 (실제 성과 vs backtest 기대)
+- 각 청산의 진입 메모 + 청산 메모
+
+### `notify` — 텔레그램 알림
+
+```bash
+# .env 에 TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID 추가
+python -m five_pct_radar notify
+```
+
+오늘의 STRONG 시그널 + EXIT 트리거를 텔레그램으로 push. 토큰 미설정 시 stdout fallback.
+
+### 권장 cron 설정
+
+```bash
+# 평일 09:30 (장 개장 직후) 와 15:30 (장 마감 직후)
+30 9,15 * * 1-5 cd ~/5pct-radar && python -m five_pct_radar notify
+```
+
+---
+
 ## 5. 어떤 원리로 동작하나요?
 
 ```

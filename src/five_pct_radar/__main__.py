@@ -250,10 +250,100 @@ def self_test() -> bool:
     return all_ok
 
 
+SUBCOMMANDS = {"today", "dive", "position", "journal", "notify"}
+
+
+def _dispatch_subcommand() -> bool:
+    """첫 인자가 subcommand 면 처리 후 True. 아니면 False (기존 flag 모드)."""
+    if len(sys.argv) < 2 or sys.argv[1] not in SUBCOMMANDS:
+        return False
+    cmd = sys.argv[1]
+    rest = sys.argv[2:]
+
+    if cmd == "today":
+        from .today import save_today
+        path = save_today()
+        print(f"\n✅ 저장: {path}\n")
+        print(path.read_text(encoding="utf-8"))
+        return True
+
+    if cmd == "dive":
+        if not rest:
+            print("usage: radar dive <stock_code>")
+            sys.exit(2)
+        from .dive import save_dive
+        path = save_dive(rest[0])
+        print(f"\n✅ 저장: {path}")
+        return True
+
+    if cmd == "position":
+        from . import position as pos_mod
+        sub = rest[0] if rest else "list"
+        args = rest[1:]
+        if sub == "add":
+            ap = argparse.ArgumentParser(prog="radar position add")
+            ap.add_argument("stock_code")
+            ap.add_argument("--price", type=float, required=True)
+            ap.add_argument("--shares", type=int, required=True)
+            ap.add_argument("--actor", default="", help="follow 한 운용사")
+            ap.add_argument("--note", default="", help="§13 메모")
+            a = ap.parse_args(args)
+            p = pos_mod.add_position(a.stock_code, a.price, a.shares,
+                                     actor_followed=a.actor, note=a.note)
+            print(f"✅ 포지션 추가: {p['corp_name']} ({p['stock_code']}) "
+                  f"@ {p['entry_price']:,.0f}원 × {p['shares']:,}주")
+            print(f"   익절 {p['take_profit']:,}원 / 손절 {p['stop_loss']:,}원")
+        elif sub == "list":
+            print(pos_mod.render_position_list())
+        elif sub == "close":
+            ap = argparse.ArgumentParser(prog="radar position close")
+            ap.add_argument("stock_code")
+            ap.add_argument("--price", type=float, required=True)
+            ap.add_argument("--note", default="")
+            a = ap.parse_args(args)
+            c = pos_mod.close_position(a.stock_code, a.price, note=a.note)
+            print(f"✅ 청산: {c['corp_name']} ({c['stock_code']}) {c['return_pct']:+.1f}% "
+                  f"({c['holding_days']}일 보유)")
+        elif sub == "note":
+            if len(args) < 2:
+                print("usage: radar position note <stock_code> \"<text>\"")
+                sys.exit(2)
+            p = pos_mod.annotate_position(args[0], " ".join(args[1:]))
+            print(f"✅ 메모 추가: {p['corp_name']} ({p['stock_code']})")
+        else:
+            print("usage: radar position {add|list|close|note} ...")
+            sys.exit(2)
+        return True
+
+    if cmd == "journal":
+        from .journal import save_review
+        sub = rest[0] if rest else "review"
+        if sub == "review":
+            path = save_review()
+            print(f"\n✅ 저장: {path}\n")
+            print(path.read_text(encoding="utf-8"))
+        else:
+            print("usage: radar journal review")
+            sys.exit(2)
+        return True
+
+    if cmd == "notify":
+        from .notify import send_today_summary
+        ok = send_today_summary()
+        print("✅ 알림 전송 성공" if ok else "⚠️ 텔레그램 미설정 또는 실패 — 위 출력 참조")
+        return True
+
+    return False
+
+
 def main():
+    if _dispatch_subcommand():
+        sys.exit(0)
+
     p = argparse.ArgumentParser(
         prog="five_pct_radar",
         description="5pct-radar — 한국 거래소 5% 대량보유 신고 본문 자동 분석",
+        epilog="Subcommands: today, dive <code>, position {add|list|close|note}, journal review, notify",
     )
     p.add_argument("rcept_no", nargs="?", help="DART 접수번호 (14자리)")
     p.add_argument("--stock-code", help="발행회사 종목코드 (생략 시 본문에서 자동 추출)")
