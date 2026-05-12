@@ -250,7 +250,7 @@ def self_test() -> bool:
     return all_ok
 
 
-SUBCOMMANDS = {"today", "dive", "position", "journal", "notify", "size", "rank", "daily"}
+SUBCOMMANDS = {"today", "dive", "position", "journal", "notify", "size", "rank", "daily", "holdings"}
 
 
 def _dispatch_subcommand() -> bool:
@@ -383,6 +383,13 @@ def _dispatch_subcommand() -> bool:
         ap.add_argument("--max-dives", type=int, default=10)
         a = ap.parse_args(rest)
         path = save_daily(days=a.days, min_score=a.min_score, max_dives=a.max_dives)
+        print(f"\n✅ 저장: {path}\n")
+        print(path.read_text(encoding="utf-8"))
+        return True
+
+    if cmd == "holdings":
+        from .holdings import save_holdings
+        path = save_holdings()
         print(f"\n✅ 저장: {path}\n")
         print(path.read_text(encoding="utf-8"))
         return True
