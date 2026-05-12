@@ -369,28 +369,32 @@ def save_holdings(lifecycle_path: Path | None = None, *,
         else:
             print(f"[4/5] auto-dive 비활성")
 
-    # [5/5] Obsidian 미러
-    if mirror_obsidian:
-        print(f"[5/5] Obsidian 폴더 미러 ({OBSIDIAN_DIR.name}) ...")
-        OBSIDIAN_DIR.mkdir(parents=True, exist_ok=True)
-        # 날짜별 하위 폴더
-        day_dir = OBSIDIAN_DIR / today_iso
+    # [5/5] 날짜별 미러 폴더 (data/holdings/<date>/ + Obsidian)
+    # 두 곳에 동일한 구조로 저장
+    print(f"[5/5] 날짜별 폴더 미러 ...")
+    idx_md = _build_obsidian_index(today_iso, data, movements, auto_dive_results)
+
+    def _mirror_to(base: Path) -> None:
+        base.mkdir(parents=True, exist_ok=True)
+        day_dir = base / today_iso
         day_dir.mkdir(parents=True, exist_ok=True)
-        # holdings + movements
-        (day_dir / f"holdings.md").write_text(holdings_md, encoding="utf-8")
-        (day_dir / f"movements.md").write_text(movements_md, encoding="utf-8")
-        # auto dive 보고서들
+        (day_dir / "holdings.md").write_text(holdings_md, encoding="utf-8")
+        (day_dir / "movements.md").write_text(movements_md, encoding="utf-8")
         for r in auto_dive_results:
             src = r["path"]
             if src.exists():
-                dest = day_dir / f"dive_{r['code']}.md"
-                dest.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
-        # 인덱스 md
-        idx_md = _build_obsidian_index(today_iso, data, movements, auto_dive_results)
+                (day_dir / f"dive_{r['code']}.md").write_text(
+                    src.read_text(encoding="utf-8"), encoding="utf-8")
         (day_dir / "_index.md").write_text(idx_md, encoding="utf-8")
-        # 전체 인덱스 갱신
-        _update_master_index(OBSIDIAN_DIR)
-        print(f"  ✓ 저장: {day_dir}")
+        _update_master_index(base)
+        print(f"  ✓ {day_dir}")
+
+    # data/holdings/<date>/ — 로컬 미러 (항상)
+    _mirror_to(HOLDINGS_DIR)
+
+    # Obsidian iCloud — 옵션
+    if mirror_obsidian:
+        _mirror_to(OBSIDIAN_DIR)
 
     return holdings_path
 
