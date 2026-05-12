@@ -186,6 +186,61 @@ def fetch_majorstock(corp_code: str) -> list[dict]:
     return list(j.get("list", [])) if j and j.get("status") == "000" else []
 
 
+def fetch_treasury_shares(corp_code: str, shares_outstanding: int = 0) -> tuple[int, int, int, int, float | None, str]:
+    """자기주식 취득·처분 현황 (정기보고서 기준).
+
+    DART endpoint: tesstkAcqsDspsSttus.json
+    가장 최근 정기보고서 (사업/분기/반기) 의 *보통주 장내직접취득 + 소계* trmend_qy 합산.
+
+    Args:
+        corp_code: DART corp_code
+        shares_outstanding: 발행주식수 (없으면 0)
+
+    Returns:
+        (보유 자기주식 수, 기초, 취득, 처분, 비율%, label)
+    """
+    now_year = datetime.now().year
+    for y in (now_year, now_year - 1, now_year - 2):
+        for reprt in ("11011", "11014", "11012", "11013"):
+            j = dart_get("tesstkAcqsDspsSttus.json", {
+                "corp_code": corp_code, "bsns_year": str(y), "reprt_code": reprt,
+            })
+            if not j or j.get("status") != "000":
+                continue
+            tesstk = bsis = acqs = dsps = 0
+            for it in j.get("list", []):
+                if it.get("stock_knd") != "보통주":
+                    continue
+                # 장내직접취득 + 소계 + 신탁수탁자보유물량 모두 합산
+                mth3 = it.get("acqs_mth3", "")
+                if mth3 not in ("장내직접취득", "장외직접취득", "공개매수", "수탁자보유물량", "현물보유량", "소계", "총계"):
+                    continue
+                # 소계만 가져오면 두 번 카운트 방지
+                if mth3 != "소계" and mth3 != "총계":
+                    continue
+                # 우리는 소계 또는 총계 한 번만
+                try:
+                    bsis_q = it.get("bsis_qy", "0").replace(",", "")
+                    aq_q = it.get("change_qy_acqs", "0").replace(",", "")
+                    ds_q = it.get("change_qy_dsps", "0").replace(",", "")
+                    tm_q = it.get("trmend_qy", "0").replace(",", "")
+                    if bsis_q == "-": bsis_q = "0"
+                    if aq_q == "-": aq_q = "0"
+                    if ds_q == "-": ds_q = "0"
+                    if tm_q == "-": tm_q = "0"
+                    bsis += int(bsis_q)
+                    acqs += int(aq_q)
+                    dsps += int(ds_q)
+                    tesstk = max(tesstk, int(tm_q))
+                except (ValueError, TypeError):
+                    continue
+            if tesstk > 0 or acqs > 0 or dsps > 0:
+                pct = (tesstk / shares_outstanding * 100) if shares_outstanding else None
+                label = {"11011": "사업보고서", "11014": "3Q", "11012": "반기", "11013": "1Q"}.get(reprt, "?")
+                return tesstk, bsis, acqs, dsps, pct, f"{y} {label}"
+    return 0, 0, 0, 0, None, ""
+
+
 def fetch_document_text(rcept_no: str) -> str:
     """document.xml ZIP 다운로드 + 본문 텍스트 추출."""
     from .dart_client import dart_fetch_zip
@@ -391,11 +446,15 @@ def render_dive(stock_code: str) -> str:
     actor_data = analyze_actor_trades(majorstock)
     print(f"  ✓ 보고자 {len(actor_data)} 명, 매매내역 추출 완료")
 
-    print(f"[5/6] yfinance 가격 + 시총 ...")
+    print(f"[5/6] yfinance 가격 + 시총 + 자기주식 ...")
     cur_price, suffix, price_info = yfinance_price(stock_code)
     shares = estimate_shares_outstanding(majorstock)
     market_cap = cur_price * shares / 1e8 if cur_price and shares else 0
+    tes_qty, tes_bsis, tes_acqs, tes_dsps, tes_pct, tes_label = fetch_treasury_shares(corp_code, shares)
     print(f"  ✓ 현재가 {cur_price:,.0f}원, 시총 {market_cap:,.0f}억원")
+    if tes_qty > 0:
+        pct_str = f"{tes_pct:.1f}%" if tes_pct is not None else "?%"
+        print(f"  · 자기주식 보유 {tes_qty:,}주 ({pct_str}, {tes_label}) — 직전 취득 {tes_acqs:,}주")
 
     print(f"[6/6] 보고서 생성 ...")
     md = _build_markdown(
@@ -406,6 +465,8 @@ def render_dive(stock_code: str) -> str:
         majorstock=majorstock, actor_data=actor_data,
         cur_price=cur_price, suffix=suffix, price_info=price_info,
         shares=shares, market_cap=market_cap,
+        tes_qty=tes_qty, tes_bsis=tes_bsis, tes_acqs=tes_acqs, tes_dsps=tes_dsps,
+        tes_pct=tes_pct, tes_label=tes_label,
     )
     return md
 
@@ -413,7 +474,9 @@ def render_dive(stock_code: str) -> str:
 def _build_markdown(*, stock_code, corp_name, corp_code, company, annual_year, annual,
                     q_year, q_label, quarterly, prelims, prelim_meta, prelim_body,
                     majorstock, actor_data,
-                    cur_price, suffix, price_info, shares, market_cap) -> str:
+                    cur_price, suffix, price_info, shares, market_cap,
+                    tes_qty=0, tes_bsis=0, tes_acqs=0, tes_dsps=0,
+                    tes_pct=None, tes_label="") -> str:
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     o: list[str] = []
     o.append(f"# 📋 {corp_name} ({stock_code}) — Dive 보고서")
@@ -518,6 +581,16 @@ def _build_markdown(*, stock_code, corp_name, corp_code, company, annual_year, a
         cap_won = annual["자본총계"]["thstrm"]  # 억원
         pbr = market_cap / cap_won if cap_won else 0
         o.append(f"- **PBR** = 시총 {market_cap:,.0f}억 / 자본 {cap_won:,.0f}억 = **{pbr:.2f}배**")
+        # NAV 할인 PBR — 자기주식 차감 (유통주식 기준)
+        if tes_qty and cur_price and shares:
+            tes_value = tes_qty * cur_price / 1e8  # 억원
+            adjusted_cap = cap_won - tes_value
+            float_shares = shares - tes_qty
+            float_mc = cur_price * float_shares / 1e8
+            adj_pbr = float_mc / adjusted_cap if adjusted_cap > 0 else 0
+            pct_str = f"{tes_pct:.1f}%" if tes_pct is not None else "?"
+            o.append(f"- **NAV 조정 PBR** = 유통시총 {float_mc:,.0f}억 / (자본 - 자기주식가치 {tes_value:,.0f}억) = **{adj_pbr:.2f}배**")
+            o.append(f"  - *자기주식 {tes_qty:,}주 ({pct_str}) 차감 효과*")
 
     # PER 1: 연간 사업보고서 (LTM)
     if annual and "당기순이익" in annual and shares and cur_price:
@@ -530,6 +603,13 @@ def _build_markdown(*, stock_code, corp_name, corp_code, company, annual_year, a
     # PER 2: 잠정실적 분기 연환산 (가장 fresh)
     if prelim_body and prelim_body.get("rows") and shares and cur_price:
         rows = prelim_body["rows"]
+        # 누계 분기 수 추론 (period_end 의 월)
+        period_end = prelim_body.get("period_end", "")
+        try:
+            end_month = int(period_end[5:7]) if period_end else 3
+        except (ValueError, TypeError):
+            end_month = 3
+        n_quarters = max(1, end_month // 3)
         # 지배지분 우선, 없으면 당기순이익
         if "지배기업 소유주지분 순이익" in rows:
             ni_q = rows["지배기업 소유주지분 순이익"]["this"] * 1e8
@@ -541,11 +621,19 @@ def _build_markdown(*, stock_code, corp_name, corp_code, company, annual_year, a
             ni_q = 0
             label = ""
         if ni_q > 0:
-            annualized = ni_q * 4
+            # 누계 기반 연환산: cum / n_quarters × 4
+            # 1Q (n=1): this × 4 와 동일
+            # 반기 (n=2): cum × 2
+            # 3Q (n=3): cum × 4/3
+            annualized = ni_q * (4 / n_quarters)
             eps_q = annualized / shares
             per_q = cur_price / eps_q if eps_q else 0
-            period = prelim_body.get("period_end", "")[:7]
-            o.append(f"- **PER (잠정 {period} {label} ×4 연환산)** = {cur_price:,.0f}원 / EPS {eps_q:,.0f}원 = **{per_q:.1f}배** ⭐ *가장 fresh*")
+            period = period_end[:7]
+            quarters_label = {1: "1Q", 2: "반기", 3: "3Q", 4: "연간"}.get(n_quarters, f"{n_quarters}Q")
+            o.append(f"- **PER (잠정 {period}, {quarters_label} {label} → 연환산)** = "
+                     f"{cur_price:,.0f}원 / EPS {eps_q:,.0f}원 = **{per_q:.1f}배** ⭐ *가장 fresh*")
+            if n_quarters > 1:
+                o.append(f"  - *누계 {ni_q/1e8:,.0f}억 ÷ {n_quarters}분기 × 4 = 연환산 {annualized/1e8:,.0f}억*")
 
     # PER 3: 정식 분기 (잠정 없을 때만)
     if (not prelim_body or not prelim_body.get("rows")) and quarterly and "당기순이익" in quarterly and shares and cur_price:
@@ -556,6 +644,34 @@ def _build_markdown(*, stock_code, corp_name, corp_code, company, annual_year, a
             per_q = cur_price / eps_q if eps_q else 0
             o.append(f"- **PER ({q_year} {q_label} ×4 연환산)** = {cur_price:,.0f}원 / EPS {eps_q:,.0f}원 = **{per_q:.1f}배**")
     o.append("")
+
+    # §5.5 자기주식 catalyst
+    if tes_qty > 0 or tes_acqs > 0:
+        o.append("## §5.5 자기주식 catalyst")
+        o.append("")
+        pct_str = f"**{tes_pct:.1f}%**" if tes_pct is not None else "?"
+        o.append(f"- 자기주식 보유: **{tes_qty:,}주** ({pct_str}) — *{tes_label}* 기준")
+        if tes_pct is not None:
+            if tes_pct >= 5:
+                o.append(f"  - 🟢 *5% 이상* — *소각 / 주주환원* catalyst 잠재력 **강함**")
+            elif tes_pct >= 2:
+                o.append(f"  - 🟡 *2~5%* — 소각·배당 확대 가능")
+            else:
+                o.append(f"  - ⚪ 1~2% — 작은 규모")
+        if tes_bsis or tes_acqs or tes_dsps:
+            o.append("")
+            o.append(f"### 직전 회계연도 변동")
+            o.append("")
+            o.append(f"| 기초 | 취득 | 처분 | 기말 |")
+            o.append(f"|---:|---:|---:|---:|")
+            o.append(f"| {tes_bsis:,} | **+{tes_acqs:,}** | -{tes_dsps:,} | {tes_qty:,} |")
+            if tes_acqs > 0:
+                o.append("")
+                o.append(f"→ 🟢 *직전 연도 {tes_acqs:,}주 매입* — *주주환원 catalyst* 진행 중")
+            if tes_dsps > 0:
+                o.append("")
+                o.append(f"→ 🔴 *직전 연도 {tes_dsps:,}주 처분* — *EPS 희석 risk*")
+        o.append("")
 
     # §6 운용사 매매 내역 + 가중평균 단가
     o.append("## §6. 5%+ 신고 운용사 매매 분석")

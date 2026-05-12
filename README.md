@@ -244,8 +244,11 @@ python -m five_pct_radar notify
 ### 권장 cron 설정
 
 ```bash
-# 평일 09:30 (장 개장 직후) 와 15:30 (장 마감 직후)
+# 평일 09:30 (장 개장 직후) 와 15:30 (장 마감 직후) — 알림
 30 9,15 * * 1-5 cd ~/5pct-radar && python -m five_pct_radar notify
+
+# 매주 일요일 새벽 3시 — backtest + corp_code 매핑 자동 갱신
+0 3 * * 0 cd ~/5pct-radar && ./scripts/refresh_weekly.sh >> data/refresh.log 2>&1
 ```
 
 ---
