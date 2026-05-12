@@ -292,6 +292,87 @@ def render_holdings(data: dict) -> str:
     return "\n".join(o)
 
 
+def render_daily_combined(data: dict, movements: dict,
+                           today_iso: str, y_date: str) -> str:
+    """변동 + 보유 통합 데일리 보고서 (단일 파일).
+
+    구성:
+      §1-5. 변동 (어제 → 오늘) — 가장 중요
+      §6-9. 보유 현황 — 참조용
+    """
+    # movements md 본문 (헤더 + > quote + --- 모두 제외)
+    from ..workflow.movements import render_movements
+    movements_md = render_movements(movements, today_iso, y_date)
+    movements_lines = movements_md.split("\n")
+    m_start = 0
+    for i, line in enumerate(movements_lines):
+        # 본문은 "## §" 또는 "*(" 부터 시작
+        if line.startswith("## §") or line.startswith("*("):
+            m_start = i
+            break
+    # 첫 실행 (변동 없음) 시 quote 도 포함
+    if m_start == 0:
+        for i, line in enumerate(movements_lines):
+            if line.startswith("> ⚠️") or line.startswith("> 어제"):
+                m_start = i
+                break
+    movements_body = "\n".join(movements_lines[m_start:])
+    # ## §N → ## §N (그대로 유지, *변동* 섹션이 먼저)
+
+    # holdings md 본문 (헤더 제외) — 번호 §1→§6, §2→§7, §3→§8, §4→§9
+    holdings_md = render_holdings(data)
+    holdings_lines = holdings_md.split("\n")
+    h_start = 0
+    for i, line in enumerate(holdings_lines):
+        if line.startswith("## §"):
+            h_start = i
+            break
+    holdings_body_lines = holdings_lines[h_start:]
+    # §1 → §6, §2 → §7, §3 → §8, §4 → §9
+    renumber = {"## §1.": "## §6.", "## §2.": "## §7.",
+                "## §3.": "## §8.", "## §4.": "## §9."}
+    renumbered = []
+    for line in holdings_body_lines:
+        for old, new in renumber.items():
+            if line.startswith(old):
+                line = new + line[len(old):]
+                break
+        renumbered.append(line)
+    holdings_body = "\n".join(renumbered)
+
+    # 헤더
+    o = []
+    o.append(f"# 📊 운용사 Daily 보고서 — {today_iso}")
+    o.append("")
+    o.append("> 8개 검증 운용사 (VIP/베어링/신영/한투밸류/라이프/안다/트러스톤/에이티넘) 의")
+    o.append("> *어제 vs 오늘 변동* + *현재 보유 종목 + 금액 + 비중 + CAGR* 통합.")
+    o.append("")
+    if y_date:
+        o.append(f"**비교 기준**: 어제 ({y_date}) → 오늘 ({today_iso})")
+    else:
+        o.append(f"**비교 기준**: 첫 실행 — 변동 추적 내일부터")
+    o.append("")
+    o.append("**계산 방식:**")
+    o.append("- 보유 주수 = 발행주식 × 최근 신고 비율%")
+    o.append("- 보유 금액 = 보유 주수 × yfinance 현재가")
+    o.append("- unrealized = (현재가 - 가중평균 매입가) / 매입가")
+    o.append("- CAGR = ((1 + return) ^ (365/holding_days) - 1) × 100")
+    o.append("")
+    o.append("---")
+    o.append("")
+    o.append("# Part 1. 🔄 어제 → 오늘 변동")
+    o.append("")
+    o.append(movements_body)
+    o.append("")
+    o.append("---")
+    o.append("")
+    o.append("# Part 2. 📊 현재 보유 현황")
+    o.append("")
+    o.append(holdings_body)
+
+    return "\n".join(o)
+
+
 def save_holdings(lifecycle_path: Path | None = None, *,
                   auto_dive: bool = True, mirror_obsidian: bool = True) -> Path:
     """holdings + movements + 자동 dive 통합 워크플로.
@@ -308,21 +389,9 @@ def save_holdings(lifecycle_path: Path | None = None, *,
     print(f"[1/5] 운용사 보유 데이터 수집 ...")
     data = gather_holdings(lifecycle_path)
 
-    print(f"[2/5] holdings 보고서 ...")
-    holdings_md = render_holdings(data)
-    HOLDINGS_DIR.mkdir(parents=True, exist_ok=True)
-    holdings_path = HOLDINGS_DIR / f"holdings_{today_str}.md"
-    holdings_path.write_text(holdings_md, encoding="utf-8")
-    json_path = HOLDINGS_DIR / f"holdings_{today_str}.json"
-    json_path.write_text(json.dumps(data["all"], ensure_ascii=False, indent=2, default=str),
-                          encoding="utf-8")
-
-    print(f"[3/5] daily 변동 (어제 vs 오늘) ...")
-    from ..workflow.movements import detect_movements_from_today, render_movements
+    print(f"[2/5] daily 변동 (어제 vs 오늘) ...")
+    from ..workflow.movements import detect_movements_from_today
     movements, _, y_date = detect_movements_from_today(data["all"])
-    movements_md = render_movements(movements, today_iso, y_date)
-    movements_path = HOLDINGS_DIR / f"movements_{today_str}.md"
-    movements_path.write_text(movements_md, encoding="utf-8")
     if y_date:
         n_new = sum(len(b.get("new", [])) for b in movements["by_actor"].values())
         n_removed = sum(len(b.get("removed", [])) for b in movements["by_actor"].values())
@@ -331,6 +400,16 @@ def save_holdings(lifecycle_path: Path | None = None, *,
         print(f"  ✓ 변동: 신규 {n_new}, 철수 {n_removed}, 증가 {n_inc}, 감소 {n_dec}")
     else:
         print(f"  · 어제 데이터 없음 — 첫 실행, 내일부터 변동 추적")
+
+    print(f"[3/5] 통합 데일리 보고서 (변동 + 보유) ...")
+    HOLDINGS_DIR.mkdir(parents=True, exist_ok=True)
+    daily_md = render_daily_combined(data, movements, today_iso, y_date)
+    daily_path = HOLDINGS_DIR / f"holdings_{today_str}.md"
+    daily_path.write_text(daily_md, encoding="utf-8")
+    # JSON 백업 (회고용)
+    json_path = HOLDINGS_DIR / f"holdings_{today_str}.json"
+    json_path.write_text(json.dumps(data["all"], ensure_ascii=False, indent=2, default=str),
+                          encoding="utf-8")
 
     # [4/5] 변동 종목 자동 dive
     auto_dive_results = []
@@ -378,8 +457,9 @@ def save_holdings(lifecycle_path: Path | None = None, *,
         base.mkdir(parents=True, exist_ok=True)
         day_dir = base / today_iso
         day_dir.mkdir(parents=True, exist_ok=True)
-        (day_dir / "holdings.md").write_text(holdings_md, encoding="utf-8")
-        (day_dir / "movements.md").write_text(movements_md, encoding="utf-8")
+        # 통합 데일리 (movements + holdings 결합)
+        (day_dir / "holdings.md").write_text(daily_md, encoding="utf-8")
+        # 변동 종목 dive
         for r in auto_dive_results:
             src = r["path"]
             if src.exists():
@@ -396,7 +476,7 @@ def save_holdings(lifecycle_path: Path | None = None, *,
     if mirror_obsidian:
         _mirror_to(OBSIDIAN_DIR)
 
-    return holdings_path
+    return daily_path
 
 
 def _build_obsidian_index(today_iso: str, data: dict, movements: dict,
@@ -409,8 +489,7 @@ def _build_obsidian_index(today_iso: str, data: dict, movements: dict,
     o.append("")
     o.append("## 📄 오늘의 보고서")
     o.append("")
-    o.append(f"- [[holdings|📊 운용사 보유 종목 모니터링]]")
-    o.append(f"- [[movements|🔄 어제 vs 오늘 변동]]")
+    o.append(f"- [[holdings|📊 운용사 Daily 보고서 (변동 + 보유)]]")
     if auto_dive_results:
         o.append("")
         o.append("### 🔍 자동 dive (변동 종목)")
