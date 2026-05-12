@@ -34,6 +34,11 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 CORP_MAP_FILE = DATA_DIR / "corp_code_map.json"
 FILING_INTEL_DIR = DATA_DIR / "filing_intel"
 
+# Obsidian 미러 저장 폴더 (선택) — .env 의 OBSIDIAN_DIR 또는 기본 경로
+_OBS_DEFAULT = (Path.home() / "Library" / "Mobile Documents" /
+                "iCloud~md~obsidian" / "Documents" / "theme_radar" / "5pct_radar")
+OBSIDIAN_DIR = Path(os.environ.get("OBSIDIAN_DIR", str(_OBS_DEFAULT)))
+
 
 def require(key: str) -> str:
     """필수 env 키가 있는지 확인. 없으면 명확한 에러."""

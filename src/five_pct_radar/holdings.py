@@ -28,7 +28,7 @@ from pathlib import Path
 
 import yfinance as yf
 
-from .config import CORP_MAP_FILE, DATA_DIR
+from .config import CORP_MAP_FILE, DATA_DIR, OBSIDIAN_DIR
 from .dive import ACTOR_BACKTEST, match_actor, fetch_majorstock, estimate_shares_outstanding
 
 HOLDINGS_DIR = DATA_DIR / "holdings"
@@ -133,6 +133,15 @@ def gather_holdings(lifecycle_path: Path | None = None) -> dict:
         held_value = held_shares * cur_price  # 원
         buy_avg = c["buy_avg_won"]
         unrealized_pct = (cur_price / buy_avg - 1) * 100 if buy_avg else 0
+        holding_days = c.get("holding_days", 0) or 0
+        # 연평균 수익률 (CAGR) — 30일 이상 보유만
+        cagr_pct = 0
+        if holding_days >= 30 and buy_avg > 0 and cur_price > 0:
+            r = cur_price / buy_avg
+            if r > 0:
+                cagr_pct = (r ** (365 / holding_days) - 1) * 100
+            else:
+                cagr_pct = -99.9
         holdings.append({
             "actor": c["canonical_actor"],
             "stock_code": stock_code,
@@ -144,8 +153,9 @@ def gather_holdings(lifecycle_path: Path | None = None) -> dict:
             "held_shares": held_shares,
             "held_value": held_value,
             "unrealized_pct": unrealized_pct,
+            "cagr_pct": cagr_pct,
             "entry_date": c.get("entry_date", ""),
-            "holding_days": c.get("holding_days", 0),
+            "holding_days": holding_days,
             "status": c.get("status", ""),
             "n_buys": c.get("n_buys", 0),
         })
@@ -182,31 +192,30 @@ def render_holdings(data: dict) -> str:
     actor_totals = []
     for actor, holdings in by_actor.items():
         total_value = sum(h["held_value"] for h in holdings)
-        # 금액 가중평균 unrealized
         if total_value > 0:
             weighted_ur = sum(h["unrealized_pct"] * h["held_value"] for h in holdings) / total_value
+            weighted_cagr = sum(h["cagr_pct"] * h["held_value"] for h in holdings) / total_value
+            avg_hold = sum(h["holding_days"] * h["held_value"] for h in holdings) / total_value
         else:
-            weighted_ur = 0
+            weighted_ur = 0; weighted_cagr = 0; avg_hold = 0
         actor_totals.append({
             "actor": actor,
             "n_holdings": len(holdings),
             "total_value_won": total_value,
             "weighted_unrealized_pct": weighted_ur,
-            "best_stock": max(holdings, key=lambda h: h["unrealized_pct"]) if holdings else None,
-            "worst_stock": min(holdings, key=lambda h: h["unrealized_pct"]) if holdings else None,
+            "weighted_cagr_pct": weighted_cagr,
+            "avg_holding_days": avg_hold,
         })
     actor_totals.sort(key=lambda a: -a["total_value_won"])
 
-    o.append("| 운용사 | 보유 종목 수 | 총 보유금액 (억) | 가중평균 unrealized | 최고 종목 | 최악 종목 |")
-    o.append("|---|---:|---:|---:|---|---|")
+    o.append("| 운용사 | 보유 종목 | 총 보유금액 (억) | 절대 unrealized | **연평균 CAGR** | 평균 보유일 |")
+    o.append("|---|---:|---:|---:|---:|---:|")
     for a in actor_totals:
-        bs = a["best_stock"]
-        ws = a["worst_stock"]
-        bs_s = f"{bs['corp_name']} {bs['unrealized_pct']:+.0f}%" if bs else "—"
-        ws_s = f"{ws['corp_name']} {ws['unrealized_pct']:+.0f}%" if ws else "—"
         o.append(f"| **{a['actor']}** | {a['n_holdings']} | "
                  f"{a['total_value_won']/1e8:,.0f} | "
-                 f"**{a['weighted_unrealized_pct']:+.1f}%** | {bs_s} | {ws_s} |")
+                 f"{a['weighted_unrealized_pct']:+.1f}% | "
+                 f"**{a['weighted_cagr_pct']:+.1f}%** | "
+                 f"{a['avg_holding_days']:,.0f}일 |")
     o.append("")
 
     # 2. 각 운용사 holdings 상세
@@ -220,24 +229,26 @@ def render_holdings(data: dict) -> str:
         o.append(f"### {actor} {bt.get('signal','')}")
         o.append("")
         o.append(f"총 보유 {a['n_holdings']} 종목 · 보유금액 **{total/1e8:,.0f}억** · "
-                 f"가중평균 unrealized **{a['weighted_unrealized_pct']:+.1f}%** · "
+                 f"절대 unrealized **{a['weighted_unrealized_pct']:+.1f}%** · "
+                 f"**연평균 CAGR {a['weighted_cagr_pct']:+.1f}%** · "
                  f"backtest hit15 {bt.get('hit15','?')}%")
         o.append("")
         if not holdings:
             o.append("*(없음)*")
             continue
-        o.append("| 종목 | 평균매입 | 현재가 | 보유주수 | 보유금액(억) | 비중% | unrealized | 진입일 | 경로 |")
-        o.append("|---|---:|---:|---:|---:|---:|---:|---|---|")
+        o.append("| 종목 | 평균매입 | 현재가 | 보유금액(억) | 비중% | 절대% | **CAGR** | 보유일 |")
+        o.append("|---|---:|---:|---:|---:|---:|---:|---:|")
         for h in holdings:
             weight = (h["held_value"] / total * 100) if total > 0 else 0
             ur_emoji = "🟢" if h["unrealized_pct"] > 20 else ("🔴" if h["unrealized_pct"] < -10 else "⚪")
             ed = h["entry_date"]
             ed_fmt = f"{ed[:4]}-{ed[4:6]}-{ed[6:]}" if len(ed) == 8 else ed
+            cagr = h.get("cagr_pct", 0)
             o.append(f"| {h['corp_name']}({h['stock_code']}) | "
                      f"{h['buy_avg']:,.0f} | {h['cur_price']:,.0f} | "
-                     f"{h['held_shares']:,} | {h['held_value']/1e8:,.0f} | "
+                     f"{h['held_value']/1e8:,.0f} | "
                      f"**{weight:.1f}%** | {ur_emoji} **{h['unrealized_pct']:+.1f}%** | "
-                     f"{ed_fmt} ({h['holding_days']}d) | {h['n_buys']}buys |")
+                     f"**{cagr:+.1f}%** | {h['holding_days']}d |")
         o.append("")
 
     # 3. 공통 종목 (복수 운용사 보유)
@@ -259,39 +270,16 @@ def render_holdings(data: dict) -> str:
             o.append(f"| {hs[0]['corp_name']}({code}) | {actors} | {total_v/1e8:,.0f} |")
     o.append("")
 
-    # 4. unrealized 상위 / 하위
-    o.append("## §4. unrealized 상위 / 하위")
-    o.append("")
-    top_winners = sorted(all_holdings, key=lambda h: -h["unrealized_pct"])[:10]
-    top_losers = sorted(all_holdings, key=lambda h: h["unrealized_pct"])[:10]
-
-    o.append("### 🟢 Top 10 winners")
-    o.append("")
-    o.append("| 운용사 | 종목 | 평균매입 | 현재가 | **unrealized** | 보유금액(억) |")
-    o.append("|---|---|---:|---:|---:|---:|")
-    for h in top_winners:
-        o.append(f"| {h['actor']} | {h['corp_name']}({h['stock_code']}) | "
-                 f"{h['buy_avg']:,.0f} | {h['cur_price']:,.0f} | "
-                 f"**{h['unrealized_pct']:+.1f}%** | {h['held_value']/1e8:,.0f} |")
-    o.append("")
-    o.append("### 🔴 Top 10 losers")
-    o.append("")
-    o.append("| 운용사 | 종목 | 평균매입 | 현재가 | **unrealized** | 보유금액(억) |")
-    o.append("|---|---|---:|---:|---:|---:|")
-    for h in top_losers:
-        o.append(f"| {h['actor']} | {h['corp_name']}({h['stock_code']}) | "
-                 f"{h['buy_avg']:,.0f} | {h['cur_price']:,.0f} | "
-                 f"**{h['unrealized_pct']:+.1f}%** | {h['held_value']/1e8:,.0f} |")
-    o.append("")
-
-    # 5. 통계
-    o.append("## §5. 통계")
+    # 4. 통계 (winners/losers 섹션 제거)
+    o.append("## §4. 통계")
     o.append("")
     total_value = sum(h["held_value"] for h in all_holdings)
     avg_ur = sum(h["unrealized_pct"] * h["held_value"] for h in all_holdings) / total_value if total_value else 0
+    avg_cagr = sum(h["cagr_pct"] * h["held_value"] for h in all_holdings) / total_value if total_value else 0
     winners = sum(1 for h in all_holdings if h["unrealized_pct"] > 0)
     o.append(f"- 8개 운용사 총 보유: **{total_value/1e8:,.0f}억원** ({len(all_holdings)}건)")
-    o.append(f"- 금액 가중 평균 unrealized: **{avg_ur:+.1f}%**")
+    o.append(f"- 절대 unrealized (가중평균): **{avg_ur:+.1f}%**")
+    o.append(f"- **연평균 CAGR (가중평균): {avg_cagr:+.1f}%** ⭐")
     o.append(f"- 종목 단위 승률: **{winners/len(all_holdings)*100:.0f}%** ({winners}/{len(all_holdings)})")
     o.append(f"- 공통 보유 종목: {len(common)}개")
     o.append("")
@@ -304,17 +292,156 @@ def render_holdings(data: dict) -> str:
     return "\n".join(o)
 
 
-def save_holdings(lifecycle_path: Path | None = None) -> Path:
-    print("[1/2] 운용사 보유 데이터 수집 ...")
+def save_holdings(lifecycle_path: Path | None = None, *,
+                  auto_dive: bool = True, mirror_obsidian: bool = True) -> Path:
+    """holdings + movements + 자동 dive 통합 워크플로.
+
+    Args:
+        lifecycle_path: lifecycle JSON 경로 (None 시 자동 탐색)
+        auto_dive: 변동 종목 (신규/증가) 자동 dive 실행 여부
+        mirror_obsidian: Obsidian iCloud 폴더에도 미러 저장
+    """
+    today_dt = datetime.now()
+    today_str = today_dt.strftime("%Y%m%d")
+    today_iso = today_dt.strftime("%Y-%m-%d")
+
+    print(f"[1/5] 운용사 보유 데이터 수집 ...")
     data = gather_holdings(lifecycle_path)
-    print("[2/2] 보고서 생성 ...")
-    md = render_holdings(data)
+
+    print(f"[2/5] holdings 보고서 ...")
+    holdings_md = render_holdings(data)
     HOLDINGS_DIR.mkdir(parents=True, exist_ok=True)
-    today_str = datetime.now().strftime("%Y%m%d")
-    path = HOLDINGS_DIR / f"holdings_{today_str}.md"
-    path.write_text(md, encoding="utf-8")
-    # JSON 도 저장 (회고용)
+    holdings_path = HOLDINGS_DIR / f"holdings_{today_str}.md"
+    holdings_path.write_text(holdings_md, encoding="utf-8")
     json_path = HOLDINGS_DIR / f"holdings_{today_str}.json"
     json_path.write_text(json.dumps(data["all"], ensure_ascii=False, indent=2, default=str),
                           encoding="utf-8")
-    return path
+
+    print(f"[3/5] daily 변동 (어제 vs 오늘) ...")
+    from .movements import detect_movements_from_today, render_movements
+    movements, _, y_date = detect_movements_from_today(data["all"])
+    movements_md = render_movements(movements, today_iso, y_date)
+    movements_path = HOLDINGS_DIR / f"movements_{today_str}.md"
+    movements_path.write_text(movements_md, encoding="utf-8")
+    if y_date:
+        n_new = sum(len(b.get("new", [])) for b in movements["by_actor"].values())
+        n_removed = sum(len(b.get("removed", [])) for b in movements["by_actor"].values())
+        n_inc = sum(len(b.get("increased", [])) for b in movements["by_actor"].values())
+        n_dec = sum(len(b.get("decreased", [])) for b in movements["by_actor"].values())
+        print(f"  ✓ 변동: 신규 {n_new}, 철수 {n_removed}, 증가 {n_inc}, 감소 {n_dec}")
+    else:
+        print(f"  · 어제 데이터 없음 — 첫 실행, 내일부터 변동 추적")
+
+    # [4/5] 변동 종목 자동 dive
+    auto_dive_results = []
+    if auto_dive and y_date:
+        print(f"[4/5] 변동 종목 자동 dive ...")
+        from .dive import save_dive
+        # 우선순위: 신규 > 비중 증가
+        priority_codes: list[tuple[str, str, str]] = []  # (code, reason, actor)
+        seen = set()
+        for actor, b in movements["by_actor"].items():
+            for h in b.get("new", []):
+                if h["stock_code"] not in seen:
+                    priority_codes.append((h["stock_code"], "🆕 신규 진입", actor))
+                    seen.add(h["stock_code"])
+            for h in b.get("increased", []):
+                if h["stock_code"] not in seen:
+                    qty_pct = h.get("qty_change_pct", 0)
+                    priority_codes.append((h["stock_code"],
+                                           f"⬆️ {qty_pct:+.0f}% 추가", actor))
+                    seen.add(h["stock_code"])
+        # 최대 10건
+        priority_codes = priority_codes[:10]
+        for i, (code, reason, actor) in enumerate(priority_codes, 1):
+            print(f"  [{i}/{len(priority_codes)}] dive {code} ({reason}, {actor})")
+            try:
+                dp = save_dive(code)
+                auto_dive_results.append({"code": code, "reason": reason,
+                                          "actor": actor, "path": dp})
+            except Exception as e:
+                print(f"    ✗ 오류: {e}")
+        if not priority_codes:
+            print(f"  · 변동 종목 없음 — dive skip")
+    else:
+        if not y_date:
+            print(f"[4/5] 첫 실행 — auto-dive skip")
+        else:
+            print(f"[4/5] auto-dive 비활성")
+
+    # [5/5] Obsidian 미러
+    if mirror_obsidian:
+        print(f"[5/5] Obsidian 폴더 미러 ({OBSIDIAN_DIR.name}) ...")
+        OBSIDIAN_DIR.mkdir(parents=True, exist_ok=True)
+        # 날짜별 하위 폴더
+        day_dir = OBSIDIAN_DIR / today_iso
+        day_dir.mkdir(parents=True, exist_ok=True)
+        # holdings + movements
+        (day_dir / f"holdings.md").write_text(holdings_md, encoding="utf-8")
+        (day_dir / f"movements.md").write_text(movements_md, encoding="utf-8")
+        # auto dive 보고서들
+        for r in auto_dive_results:
+            src = r["path"]
+            if src.exists():
+                dest = day_dir / f"dive_{r['code']}.md"
+                dest.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+        # 인덱스 md
+        idx_md = _build_obsidian_index(today_iso, data, movements, auto_dive_results)
+        (day_dir / "_index.md").write_text(idx_md, encoding="utf-8")
+        # 전체 인덱스 갱신
+        _update_master_index(OBSIDIAN_DIR)
+        print(f"  ✓ 저장: {day_dir}")
+
+    return holdings_path
+
+
+def _build_obsidian_index(today_iso: str, data: dict, movements: dict,
+                          auto_dive_results: list) -> str:
+    """Obsidian 일별 인덱스 — 모든 보고서 링크."""
+    o: list[str] = []
+    o.append(f"# 📡 5pct-radar — {today_iso}")
+    o.append("")
+    o.append(f"*Obsidian Vault 자동 생성. 출처: 5pct-radar v0.1.0*")
+    o.append("")
+    o.append("## 📄 오늘의 보고서")
+    o.append("")
+    o.append(f"- [[holdings|📊 운용사 보유 종목 모니터링]]")
+    o.append(f"- [[movements|🔄 어제 vs 오늘 변동]]")
+    if auto_dive_results:
+        o.append("")
+        o.append("### 🔍 자동 dive (변동 종목)")
+        o.append("")
+        for r in auto_dive_results:
+            o.append(f"- [[dive_{r['code']}|{r['reason']} {r['code']}]] — {r['actor']}")
+    o.append("")
+    o.append("## 📈 빠른 통계")
+    o.append("")
+    all_h = data["all"]
+    if all_h:
+        total = sum(h["held_value"] for h in all_h)
+        avg_ur = sum(h["unrealized_pct"] * h["held_value"] for h in all_h) / total if total else 0
+        o.append(f"- 8개 운용사 총 보유: **{total/1e8:,.0f}억원** ({len(all_h)} cycle)")
+        o.append(f"- 가중평균 unrealized: **{avg_ur:+.1f}%**")
+    if movements.get("by_actor"):
+        n_new = sum(len(b.get("new", [])) for b in movements["by_actor"].values())
+        n_removed = sum(len(b.get("removed", [])) for b in movements["by_actor"].values())
+        n_inc = sum(len(b.get("increased", [])) for b in movements["by_actor"].values())
+        o.append(f"- 어제→오늘 변동: 🆕 {n_new} / 🚪 {n_removed} / ⬆️ {n_inc}")
+    o.append("")
+    o.append("---")
+    o.append("")
+    o.append(f"*자동 cron: `30 16 * * 1-5 cd ~/5pct-radar && python -m five_pct_radar holdings`*")
+    return "\n".join(o)
+
+
+def _update_master_index(obs_dir: Path) -> None:
+    """OBSIDIAN_DIR/index.md — 모든 일별 폴더 링크 (최신 → 과거)."""
+    days = sorted([d.name for d in obs_dir.iterdir()
+                   if d.is_dir() and not d.name.startswith(".")],
+                  reverse=True)
+    lines = ["# 📡 5pct-radar — Obsidian Index", "",
+             f"*Auto-generated. 총 {len(days)}일 누적.*", "",
+             "## 일별 리포트"]
+    for d in days[:90]:  # 최대 90일
+        lines.append(f"- [[{d}/_index|{d}]]")
+    (obs_dir / "index.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
