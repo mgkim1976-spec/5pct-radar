@@ -29,6 +29,8 @@ import yfinance as yf
 from ..config import CORP_MAP_FILE, DATA_DIR, FILING_INTEL_DIR
 from ..core.dart_client import dart_get
 
+DIVES_DIR = DATA_DIR / "dives"
+
 
 # 운용사 backtest 결과 (lifecycle 10년 + A1 exit 기준)
 # 출처: docs/STRATEGY_FINDINGS.md
@@ -785,9 +787,60 @@ def _build_markdown(*, stock_code, corp_name, corp_code, company, annual_year, a
 
 
 def save_dive(stock_code: str) -> Path:
+    """data/dives/<YYYY-MM-DD>/<code>_<name>.md 에 저장 + 인덱스 갱신."""
     md = render_dive(stock_code)
-    FILING_INTEL_DIR.mkdir(parents=True, exist_ok=True)
-    today_str = datetime.now().strftime("%Y%m%d")
-    path = FILING_INTEL_DIR / f"dive_{stock_code}_{today_str}.md"
+    cm = _load_corp_map()
+    corp_name = (cm.get(stock_code) or {}).get("corp_name", stock_code)
+    name_safe = corp_name.replace(" ", "_").replace("/", "_")
+    today_iso = datetime.now().strftime("%Y-%m-%d")
+    day_dir = DIVES_DIR / today_iso
+    day_dir.mkdir(parents=True, exist_ok=True)
+    path = day_dir / f"{stock_code}_{name_safe}.md"
     path.write_text(md, encoding="utf-8")
+    _update_dives_index(DIVES_DIR)
     return path
+
+
+def _update_dives_index(dives_dir: Path) -> None:
+    """data/dives/_index.md — 모든 dive 인덱스 (날짜별 + 종목별 latest)."""
+    if not dives_dir.exists():
+        return
+    all_dives: dict[str, list[tuple[str, Path]]] = {}
+    by_code: dict[str, tuple[str, Path]] = {}
+    for day_dir in sorted(dives_dir.iterdir(), reverse=True):
+        if not day_dir.is_dir() or day_dir.name.startswith("."):
+            continue
+        date = day_dir.name
+        all_dives[date] = []
+        for f in sorted(day_dir.glob("*.md")):
+            stem = f.stem
+            all_dives[date].append((stem, f))
+            code = stem.split("_")[0]
+            if code not in by_code:
+                by_code[code] = (date, f)
+
+    total = sum(len(v) for v in all_dives.values())
+    lines = [
+        "# 🔍 5pct-radar Dives — 종목 deep dive 인덱스",
+        "",
+        f"*Auto-generated. 총 {total}건 누적, {len(by_code)}개 종목.*",
+        "",
+        "## 종목별 최신 dive",
+        "",
+        "| 종목 | 최신 일자 | 보고서 |",
+        "|---|---|---|",
+    ]
+    for code, (date, f) in sorted(by_code.items()):
+        rel = f.relative_to(dives_dir)
+        lines.append(f"| {f.stem} | {date} | [{rel}]({rel}) |")
+    lines.extend(["", "## 날짜별 (최신 → 과거)", ""])
+    for date, dives in all_dives.items():
+        if not dives:
+            continue
+        lines.append(f"### {date}")
+        lines.append("")
+        for stem, f in dives:
+            rel = f.relative_to(dives_dir)
+            lines.append(f"- [{stem}]({rel})")
+        lines.append("")
+    (dives_dir / "_index.md").write_text("\n".join(lines), encoding="utf-8")

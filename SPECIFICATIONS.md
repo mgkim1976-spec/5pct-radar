@@ -15,7 +15,8 @@
 | **운용사 변동 추적** | `data/holdings/<YYYY-MM-DD>/movements.md` | 평일 16:30 (launchd) | 본인 |
 | **변동 종목 자동 dive** | `data/holdings/<YYYY-MM-DD>/dive_<code>.md` | 변동 발생 시 | 본인 |
 | **우선순위 ranking** | `data/rank/rank_<YYYYMMDD>.{md,json}` | 평일 09:30 (launchd) | 본인 |
-| **종목 deep dive** | `data/filing_intel/dive_<code>_<date>.md` | on-demand | 본인 |
+| **종목 deep dive** | `data/dives/<YYYY-MM-DD>/<code>_<종목명>.md` | on-demand | 본인 |
+| **dive 마스터 인덱스** | `data/dives/_index.md` | 자동 갱신 | 본인 |
 
 ### 1.2 Obsidian 미러 (선택)
 
