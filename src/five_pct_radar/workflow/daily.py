@@ -31,7 +31,7 @@ from ..workflow.movements import detect_movements_from_today
 DAILY_DIR = DATA_DIR / "daily"
 
 
-def build_daily(top_n: int = 15) -> str:
+def build_daily(top_n: int = 15, *, auto_dive: bool = True) -> str:
     today_iso = datetime.now().strftime("%Y-%m-%d %H:%M")
     o: list[str] = []
     o.append(f"# 🎯 5pct-radar Daily — {today_iso}")
@@ -82,10 +82,39 @@ def build_daily(top_n: int = 15) -> str:
         o.append(line)
     o.append("")
 
-    # §3. 운용사 변동 + §4. 보유 현황
-    print(f"[2/4] 운용사 변동 + 보유 ...")
+    # §3. 운용사 변동 + §4. 보유 현황 + 자동 dive
+    print(f"[2/4] 운용사 변동 + 보유 + 자동 dive ...")
     holdings_data = gather_holdings()
     movements, _, y_date = detect_movements_from_today(holdings_data["all"])
+
+    # 변동 종목 자동 dive (신규 + 비중 증가)
+    auto_dive_count = 0
+    if auto_dive and y_date:
+        from ..workflow.dive import save_dive
+        priority_codes: list[tuple[str, str, str]] = []
+        seen = set()
+        for actor, b in movements["by_actor"].items():
+            for h in b.get("new", []):
+                if h["stock_code"] not in seen:
+                    priority_codes.append((h["stock_code"], "🆕 신규", actor))
+                    seen.add(h["stock_code"])
+            for h in b.get("increased", []):
+                if h["stock_code"] not in seen:
+                    priority_codes.append((h["stock_code"], "⬆️ 증가", actor))
+                    seen.add(h["stock_code"])
+        # 우선순위 ranking 1~3위도 자동 dive (이미 있으면 skip)
+        for r in ranked[:3]:
+            if r["stock_code"] not in seen:
+                priority_codes.append((r["stock_code"], "🏆 우선순위", r.get("matched_actor") or "—"))
+                seen.add(r["stock_code"])
+        priority_codes = priority_codes[:10]
+        for i, (code, reason, actor) in enumerate(priority_codes, 1):
+            print(f"    [{i}/{len(priority_codes)}] auto-dive {code} ({reason})")
+            try:
+                save_dive(code)
+                auto_dive_count += 1
+            except Exception as e:
+                print(f"      ✗ {e}")
 
     o.append("## §3. 🔄 운용사 변동 (어제 → 오늘)")
     o.append("")
@@ -211,6 +240,8 @@ def build_daily(top_n: int = 15) -> str:
     o.append(f"- 오늘 신고: {len(filings)}건 (🟢 {n_strong} / 🟡 {n_medium} / 🔴 {n_avoid} / ⚪ {n_ig})")
     o.append(f"- 운용사 universe: **{len(holdings_data['all'])} 보유 종목** + 오늘 신고")
     o.append(f"- 우선순위 shortlist: **{len(ranked)}건** (점수 ≥ 30)")
+    if auto_dive_count:
+        o.append(f"- 자동 dive 실행: **{auto_dive_count}건** (변동 종목 + 우선순위 Top 3)")
     o.append("")
     if ranked:
         top = ranked[0]
@@ -237,8 +268,8 @@ def build_daily(top_n: int = 15) -> str:
     return "\n".join(o)
 
 
-def save_daily(top_n: int = 15, *, mirror_obsidian: bool = True) -> Path:
-    md = build_daily(top_n=top_n)
+def save_daily(top_n: int = 15, *, auto_dive: bool = True, mirror_obsidian: bool = True) -> Path:
+    md = build_daily(top_n=top_n, auto_dive=auto_dive)
     DAILY_DIR.mkdir(parents=True, exist_ok=True)
     today_str = datetime.now().strftime("%Y%m%d")
     today_iso = datetime.now().strftime("%Y-%m-%d")

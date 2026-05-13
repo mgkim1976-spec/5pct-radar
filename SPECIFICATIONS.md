@@ -65,20 +65,17 @@
 
 ## 3. 처리 파이프라인
 
-### 3.1 매일 자동 (launchd 3 plist)
+### 3.1 매일 자동 (launchd 1 plist — 통합)
 
 ```
-[09:30 평일] com.mgprj.5pct_radar.daily   →   radar daily
-                                                 ├─ today (오늘 신고 수집)
-                                                 ├─ rank (자동 dive + 정량 점수)
-                                                 └─ 통합 보고서 생성
-
-[16:30 평일] com.mgprj.5pct_radar.holdings →  radar holdings
-                                                 ├─ lifecycle JSON 로드
-                                                 ├─ 8개 검증 운용사 OPEN/TRADING
-                                                 ├─ 어제 vs 오늘 변동
-                                                 ├─ 변동 종목 자동 dive (최대 10건)
-                                                 └─ data/holdings/<date>/ + Obsidian 미러
+[16:30 평일] com.mgprj.5pct_radar.daily   →   radar daily (통합 마스터)
+                                                 ├─ EXIT 알림 (포지션 A1)
+                                                 ├─ 진입 우선순위 (opportunities, 135점)
+                                                 ├─ 운용사 변동 + 자동 dive (변동 종목 + Top 3)
+                                                 ├─ 운용사 보유 현황 (CAGR 포함)
+                                                 ├─ 오늘 신규 5%+ 신고
+                                                 ├─ 내 포지션 현황
+                                                 └─ data/daily/ + Obsidian 미러
 ```
 
 ### 3.2 매주 일요일 03:00 (launchd)

@@ -12,7 +12,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LAUNCHAGENTS="$HOME/Library/LaunchAgents"
 PLISTS=(
   "com.mgprj.5pct_radar.daily"
-  "com.mgprj.5pct_radar.holdings"
   "com.mgprj.5pct_radar.weekly"
 )
 
@@ -32,9 +31,8 @@ case "$cmd" in
     done
     echo ""
     echo "스케줄:"
-    echo "  - daily    : 평일 09:30 KST"
-    echo "  - holdings : 평일 16:30 KST"
-    echo "  - weekly   : 일요일 03:00 KST"
+    echo "  - daily   : 평일 16:30 KST (통합 — opportunities + 변동 + 자동 dive)"
+    echo "  - weekly  : 일요일 03:00 KST (corp_code + 10년 backtest)"
     echo ""
     echo "즉시 테스트: ./scheduler/install.sh test-daily"
     ;;
@@ -61,14 +59,8 @@ case "$cmd" in
     sleep 2
     tail -5 "$SCRIPT_DIR/../logs/daily_$(date +%Y-%m-%d).log" 2>/dev/null || echo "(아직 로그 없음 — 잠시 후 다시)"
     ;;
-  test-holdings)
-    echo "즉시 holdings 실행..."
-    launchctl start com.mgprj.5pct_radar.holdings
-    sleep 2
-    tail -5 "$SCRIPT_DIR/../logs/holdings_$(date +%Y-%m-%d).log" 2>/dev/null || echo "(아직 로그 없음)"
-    ;;
   *)
-    echo "Usage: $0 {install|uninstall|status|test-daily|test-holdings}"
+    echo "Usage: $0 {install|uninstall|status|test-daily}"
     exit 1
     ;;
 esac

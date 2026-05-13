@@ -380,8 +380,9 @@ def _dispatch_subcommand() -> bool:
         from .workflow.daily import save_daily
         ap = argparse.ArgumentParser(prog="radar daily")
         ap.add_argument("--top", type=int, default=15, help="ranking 상위 N (기본 15)")
+        ap.add_argument("--quick", action="store_true", help="자동 dive 생략 (빠른 brief)")
         a = ap.parse_args(rest)
-        path = save_daily(top_n=a.top)
+        path = save_daily(top_n=a.top, auto_dive=not a.quick)
         print(f"\n✅ 저장: {path}\n")
         print(path.read_text(encoding="utf-8"))
         return True

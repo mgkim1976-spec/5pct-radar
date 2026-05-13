@@ -37,10 +37,9 @@ python -m five_pct_radar holdings     # 운용사 보유 + 변동 + 자동 dive
 ./scheduler/install.sh status    # 등록 확인
 ```
 
-자동 실행:
-- **평일 09:30** — `radar daily` (오늘 신고 + 우선순위 ranking)
-- **평일 16:30** — `radar holdings` (운용사 보유 + 변동 + 자동 dive + Obsidian)
-- **일요일 03:00** — `refresh_weekly.sh` (corp_code + 10년 backtest)
+자동 실행 (2 plist 만):
+- **평일 16:30** — `radar daily` 통합 마스터 (EXIT + opportunities + 변동 + 자동 dive + Obsidian)
+- **일요일 03:00** — `run_weekly.sh` (corp_code + 10년 backtest)
 
 로그: `logs/launchd_*.log` + `data/cron_*.log`
 
