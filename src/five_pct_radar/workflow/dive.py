@@ -26,7 +26,7 @@ from typing import Any
 
 import yfinance as yf
 
-from ..config import CORP_MAP_FILE, DATA_DIR, FILING_INTEL_DIR
+from ..config import CORP_MAP_FILE, DATA_DIR, FILING_INTEL_DIR, OBSIDIAN_DIR
 from ..core.dart_client import dart_get
 
 DIVES_DIR = DATA_DIR / "dives"
@@ -786,18 +786,30 @@ def _build_markdown(*, stock_code, corp_name, corp_code, company, annual_year, a
     return "\n".join(o)
 
 
-def save_dive(stock_code: str) -> Path:
-    """data/dives/<YYYY-MM-DD>/<code>_<name>.md 에 저장 + 인덱스 갱신."""
+def save_dive(stock_code: str, *, mirror_obsidian: bool = True) -> Path:
+    """data/dives/<YYYY-MM-DD>/<code>_<name>.md 저장 + Obsidian 미러 + 인덱스."""
     md = render_dive(stock_code)
     cm = _load_corp_map()
     corp_name = (cm.get(stock_code) or {}).get("corp_name", stock_code)
     name_safe = corp_name.replace(" ", "_").replace("/", "_")
     today_iso = datetime.now().strftime("%Y-%m-%d")
+    fname = f"{stock_code}_{name_safe}.md"
+
+    # 1) 로컬 data/dives/
     day_dir = DIVES_DIR / today_iso
     day_dir.mkdir(parents=True, exist_ok=True)
-    path = day_dir / f"{stock_code}_{name_safe}.md"
+    path = day_dir / fname
     path.write_text(md, encoding="utf-8")
     _update_dives_index(DIVES_DIR)
+
+    # 2) Obsidian dives/
+    if mirror_obsidian:
+        obs_dives = OBSIDIAN_DIR / "dives"
+        obs_day = obs_dives / today_iso
+        obs_day.mkdir(parents=True, exist_ok=True)
+        (obs_day / fname).write_text(md, encoding="utf-8")
+        _update_dives_index(obs_dives)
+
     return path
 
 

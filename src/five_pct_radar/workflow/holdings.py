@@ -459,12 +459,8 @@ def save_holdings(lifecycle_path: Path | None = None, *,
         day_dir.mkdir(parents=True, exist_ok=True)
         # 통합 데일리 (movements + holdings 결합)
         (day_dir / "holdings.md").write_text(daily_md, encoding="utf-8")
-        # 변동 종목 dive
-        for r in auto_dive_results:
-            src = r["path"]
-            if src.exists():
-                (day_dir / f"dive_{r['code']}.md").write_text(
-                    src.read_text(encoding="utf-8"), encoding="utf-8")
+        # 자동 dive 는 dives/ 에 이미 저장됨 — 여기서는 복사 안 함
+        # (holdings.md 안에 dive 링크 표시)
         (day_dir / "_index.md").write_text(idx_md, encoding="utf-8")
         _update_master_index(base)
         print(f"  ✓ {day_dir}")
@@ -490,12 +486,15 @@ def _build_obsidian_index(today_iso: str, data: dict, movements: dict,
     o.append("## 📄 오늘의 보고서")
     o.append("")
     o.append(f"- [[holdings|📊 운용사 Daily 보고서 (변동 + 보유)]]")
+    o.append(f"- [[../dives/_index|🔍 종목 deep dive 인덱스]]")
     if auto_dive_results:
         o.append("")
         o.append("### 🔍 자동 dive (변동 종목)")
         o.append("")
         for r in auto_dive_results:
-            o.append(f"- [[dive_{r['code']}|{r['reason']} {r['code']}]] — {r['actor']}")
+            # 종목명 포함된 새 파일명 (예: 039830_오로라)
+            stem = r["path"].stem
+            o.append(f"- [[../dives/{today_iso}/{stem}|{r['reason']} {stem}]] — {r['actor']}")
     o.append("")
     o.append("## 📈 빠른 통계")
     o.append("")
