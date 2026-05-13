@@ -379,11 +379,9 @@ def _dispatch_subcommand() -> bool:
     if cmd == "daily":
         from .workflow.daily import save_daily
         ap = argparse.ArgumentParser(prog="radar daily")
-        ap.add_argument("--days", type=int, default=1)
-        ap.add_argument("--min-score", type=int, default=30)
-        ap.add_argument("--max-dives", type=int, default=10)
+        ap.add_argument("--top", type=int, default=15, help="ranking 상위 N (기본 15)")
         a = ap.parse_args(rest)
-        path = save_daily(days=a.days, min_score=a.min_score, max_dives=a.max_dives)
+        path = save_daily(top_n=a.top)
         print(f"\n✅ 저장: {path}\n")
         print(path.read_text(encoding="utf-8"))
         return True
