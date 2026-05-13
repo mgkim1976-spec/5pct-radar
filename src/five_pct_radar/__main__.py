@@ -251,7 +251,7 @@ def self_test() -> bool:
     return all_ok
 
 
-SUBCOMMANDS = {"today", "dive", "position", "journal", "notify", "size", "rank", "daily", "holdings"}
+SUBCOMMANDS = {"today", "dive", "position", "journal", "notify", "size", "rank", "daily", "holdings", "opportunities"}
 
 
 def _dispatch_subcommand() -> bool:
@@ -392,6 +392,16 @@ def _dispatch_subcommand() -> bool:
         from .workflow.holdings import save_holdings
         path = save_holdings()
         print(f"\n✅ 저장: {path}\n")
+        print(path.read_text(encoding="utf-8"))
+        return True
+
+    if cmd == "opportunities":
+        from .workflow.opportunities import save_opportunities
+        ap = argparse.ArgumentParser(prog="radar opportunities")
+        ap.add_argument("--top", type=int, default=15, help="상위 N 표시 (기본 15)")
+        a = ap.parse_args(rest)
+        path = save_opportunities(top_n=a.top)
+        print(f"\n결과:\n")
         print(path.read_text(encoding="utf-8"))
         return True
 
