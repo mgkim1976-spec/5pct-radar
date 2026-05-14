@@ -4,12 +4,14 @@
   radar opportunities --deep           # 상위 후보 dive 까지 (~10분)
   radar opportunities --top 20         # 상위 N (기본 15)
 
-점수 (총 145점):
-  - actor backtest    (40): 검증 운용사 hit15
-  - 매매 신선도        (10): 최근 매수 ≤ 30일 / 차익거래 -15
-  - **follow 적기**   (10): 현재가 vs 운용사 매수 가중평균
-  - 잠정 영업 YoY     (15): +50% 15 / +20% 10 / +0% 5
-  - 분기 가속          (15): 연간 vs 1Q 가속도
+점수 (총 145점 + 함정 페널티):
+  - actor backtest    (40): 검증 운용사 hit15 (n<20 소표본 50% 할인)
+  - 매매 신선도        (10): 최근 매수 ≤ 30일
+  - follow 적기       (10): 현재가 vs 운용사 매수 가중평균
+  - 잠정 영업 YoY     (15): +50% 15 / +20% 10
+  - 분기 가속          (15): 연간 vs 1Q (낮은 base -10 페널티)
+  - 영업적자 페널티   (-15): 연간 적자 -15 / 분기만 적자 -5
+  - 매출 방향성        (5): 연간 vs 1Q 같은 방향 +3 / V자 반등 +5 / 둔화 -5
   - 매출 YoY          (10): +30% 10 / +10% 5
   - NAV 조정 PBR      (15): ≤0.4 15 / ≤0.6 10 / ≤0.8 5
   - 자기주식          (15): 보유% + 매입 진행 + 소각 결정
@@ -169,25 +171,33 @@ def score_opportunity(code: str, u_data: dict, fin_cache: dict,
     tes_qty = f["tes_qty"]
     latest_buy = f["latest_buy_date"]
 
-    # 1) actor backtest (40)
+    # 1) actor backtest (40) — 소표본 할인 적용
     matched_actor = None
     actor_score = 0
+    actor_n = 0
     for a in u_data["actors"]:
         canonical, bt = match_actor(a)
         if bt:
             matched_actor = canonical
-            actor_score = int(bt["hit15"] * 0.8)  # max 40 (49% × 0.8 = 39.2)
+            actor_n = bt.get("n", 0)
+            actor_score = int(bt["hit15"] * 0.8)
+            # 소표본 (n < 20) 시 50% 할인
+            if actor_n < 20:
+                actor_score = int(actor_score * 0.5)
+                flags.append(f"⚠️ 소표본 actor (n={actor_n}) → 점수 50% 할인")
             if "🔴" in bt["signal"]:
                 actor_score = -25
             flags.append(f"{bt['signal']} {canonical}")
             break
-    # 오늘 신고 actor 매칭
     if not matched_actor and u_data.get("today_filing"):
         flr = u_data["today_filing"].get("flr_nm", "")
         canonical, bt = match_actor(flr)
         if bt:
             matched_actor = canonical
+            actor_n = bt.get("n", 0)
             actor_score = int(bt["hit15"] * 0.8)
+            if actor_n < 20:
+                actor_score = int(actor_score * 0.5)
             flags.append(f"🆕 오늘 신고 {canonical}")
     breakdown["actor"] = actor_score
 
@@ -226,16 +236,20 @@ def score_opportunity(code: str, u_data: dict, fin_cache: dict,
                 prelim_score = -5
     breakdown["prelim"] = prelim_score
 
-    # 4) 분기 가속 (15) — 연간 vs 3Q 가속도
+    # 4) 분기 가속 (15) — 연간 vs 분기 가속도. base 낮은 케이스 (-base 효과) 페널티
     accel_score = 0
     quarterly_op_yoy = None
+    quarterly_op_abs = None
     if quarterly.get("영업이익"):
         qv = quarterly["영업이익"]
+        quarterly_op_abs = qv["thstrm"]
         if qv["frmtrm"]:
             quarterly_op_yoy = (qv["thstrm"] / qv["frmtrm"] - 1) * 100
     annual_op_yoy = None
+    annual_op_abs = None
     if annual.get("영업이익"):
         av = annual["영업이익"]
+        annual_op_abs = av["thstrm"]
         if av["frmtrm"]:
             annual_op_yoy = (av["thstrm"] / av["frmtrm"] - 1) * 100
     if quarterly_op_yoy is not None and annual_op_yoy is not None:
@@ -247,7 +261,44 @@ def score_opportunity(code: str, u_data: dict, fin_cache: dict,
         elif quarterly_op_yoy < annual_op_yoy - 30:
             accel_score = -10
             flags.append(f"📉 둔화 (분기 {quarterly_op_yoy:+.0f}% vs 연간 {annual_op_yoy:+.0f}%)")
+        # base 효과 페널티: 분기 영업이익 < 20억 + YoY +100%+ = 낮은 base
+        if quarterly_op_abs is not None and quarterly_op_abs < 20 and quarterly_op_yoy > 100:
+            accel_score = max(0, accel_score - 10)
+            flags.append(f"⚠️ 낮은 base 효과 (분기 영업 {quarterly_op_abs:.0f}억 만 → 가속 신뢰도 낮음)")
     breakdown["accel"] = accel_score
+
+    # 4.5) 영업적자 페널티 (-15) — 연간 영업이익 < 0
+    profit_penalty = 0
+    if annual_op_abs is not None and annual_op_abs < 0:
+        profit_penalty = -15
+        flags.append(f"🔴 연간 영업적자 ({annual_op_abs:+.0f}억)")
+    elif quarterly_op_abs is not None and quarterly_op_abs < 0:
+        profit_penalty = -5
+        flags.append(f"🟡 분기 영업적자 ({quarterly_op_abs:+.0f}억)")
+    breakdown["profit_health"] = profit_penalty
+
+    # 4.6) 매출 방향성 일관성 (-5 ~ +5)
+    direction_score = 0
+    annual_rev_yoy = None
+    quarterly_rev_yoy = None
+    if annual.get("매출액") and annual["매출액"]["frmtrm"]:
+        annual_rev_yoy = (annual["매출액"]["thstrm"] / annual["매출액"]["frmtrm"] - 1) * 100
+    if quarterly.get("매출액") and quarterly["매출액"]["frmtrm"]:
+        quarterly_rev_yoy = (quarterly["매출액"]["thstrm"] / quarterly["매출액"]["frmtrm"] - 1) * 100
+    if annual_rev_yoy is not None and quarterly_rev_yoy is not None:
+        # 동일 방향 (둘 다 + 또는 둘 다 -)
+        if annual_rev_yoy > 0 and quarterly_rev_yoy > 0:
+            direction_score = 3
+        elif annual_rev_yoy < 0 and quarterly_rev_yoy < 0:
+            direction_score = 0  # 둘 다 마이너스, 중립
+        # 반대 방향 (연간 + / 분기 -, 또는 그 반대)
+        elif annual_rev_yoy > 10 and quarterly_rev_yoy < -5:
+            direction_score = -5
+            flags.append(f"📉 매출 둔화 (연간 +{annual_rev_yoy:.0f}% → 1Q {quarterly_rev_yoy:+.0f}%)")
+        elif annual_rev_yoy < -5 and quarterly_rev_yoy > 10:
+            direction_score = 5
+            flags.append(f"🔄 매출 V자 반등 (연간 {annual_rev_yoy:+.0f}% → 1Q +{quarterly_rev_yoy:.0f}%)")
+    breakdown["direction"] = direction_score
 
     # 5) 매출 YoY (10)
     rev_score = 0
@@ -317,14 +368,18 @@ def score_opportunity(code: str, u_data: dict, fin_cache: dict,
     breakdown["consensus"] = cons_score
 
     # 8.5) follow 적기 (10) — 운용사 매수 가중평균 대비 현재가
+    # buy_avgs 가 valid (NaN 아닌 정상 가격) 한 경우만
     timing_score = 0
     avg_buy_price = None
-    if u_data.get("buy_avgs") and u_data.get("held_values"):
+    valid_buys = [(b, v) for b, v in zip(u_data.get("buy_avgs", []),
+                                          u_data.get("held_values", []))
+                   if b and b > 0 and v > 0]
+    if valid_buys:
         # 운용사별 보유금액 가중 매수 가중평균
-        buys = u_data["buy_avgs"]
-        vals = u_data["held_values"]
+        buys = [b for b, _ in valid_buys]
+        vals = [v for _, v in valid_buys]
         total_val = sum(vals)
-        if total_val > 0 and len(buys) == len(vals):
+        if total_val > 0:
             avg_buy_price = sum(b * v for b, v in zip(buys, vals)) / total_val
             if avg_buy_price > 0:
                 ratio = cur_price / avg_buy_price
@@ -442,21 +497,25 @@ def build_opportunities(top_n: int = 15) -> tuple[str, list[dict]]:
         o.append(f"| {emoji} | **{r['corp_name']}**({r['stock_code']}) | **{r['total']}** | {pbr} | {op_q} | {rev} | {tes} | {debt} | {timing} | {actor} |")
     o.append("")
 
-    # 항목별 매트릭스
-    o.append("## §2. 항목별 점수 매트릭스 (145점 만점)")
+    # 항목별 매트릭스 — 함정 페널티 포함
+    o.append("## §2. 항목별 점수 매트릭스")
     o.append("")
-    o.append("| # | 종목 | actor (40) | 신선 (10) | **timing (10)** | 잠정 (15) | 가속 (15) | 매출 (10) | NAV (15) | 자기주식 (15) | cons (10) | 부채 (3) | 가격 (2) | **총** |")
-    o.append("|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
+    o.append("| # | 종목 | actor | 신선 | timing | 잠정 | 가속 | 매출 | NAV | 자기 | cons | 부채 | 가격 | **적자/방향** | **총** |")
+    o.append("|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
     for i, r in enumerate(ranked, 1):
         emoji = "🥇" if i == 1 else ("🥈" if i == 2 else ("🥉" if i == 3 else f"{i:>2}"))
         b = r["breakdown"]
+        ph = b.get('profit_health', 0)
+        dr = b.get('direction', 0)
+        penalty = f"{ph}/{dr:+d}" if (ph != 0 or dr != 0) else "  —"
         o.append(f"| {emoji} | {r['corp_name']}({r['stock_code']}) | "
                  f"{b.get('actor',0):>3} | {b.get('freshness',0):>3} | "
-                 f"**{b.get('timing',0):>3}** | "
+                 f"{b.get('timing',0):>3} | "
                  f"{b.get('prelim',0):>3} | {b.get('accel',0):>3} | "
                  f"{b.get('revenue',0):>3} | {b.get('nav_pbr',0):>3} | "
                  f"{b.get('treasury',0):>3} | {b.get('consensus',0):>3} | "
-                 f"{b.get('debt',0):>3} | {b.get('price',0):>3} | **{r['total']}** |")
+                 f"{b.get('debt',0):>3} | {b.get('price',0):>3} | "
+                 f"{penalty} | **{r['total']}** |")
     o.append("")
 
     # 시그널 flags
