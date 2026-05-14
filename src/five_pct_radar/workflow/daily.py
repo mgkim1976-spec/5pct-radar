@@ -245,7 +245,7 @@ def build_daily(top_n: int = 15, *, auto_dive: bool = True) -> str:
     o.append("")
     if ranked:
         top = ranked[0]
-        o.append(f"### 🎯 오늘의 1순위: **{top['corp_name']} ({top['stock_code']})** — {top['total']}/135점")
+        o.append(f"### 🎯 오늘의 1순위: **{top['corp_name']} ({top['stock_code']})** — {top['total']}점")
         o.append("")
         o.append("```bash")
         o.append(f"python -m five_pct_radar dive {top['stock_code']}                  # 전체 보고서")
@@ -261,7 +261,7 @@ def build_daily(top_n: int = 15, *, auto_dive: bool = True) -> str:
     o.append("- `data/dives/<date>/<code>_<name>.md` — 종목별 deep dive")
     o.append("- Obsidian Vault: `theme_radar/5pct_radar/`")
     o.append("")
-    o.append("*launchd 자동: `평일 09:30 daily / 16:30 holdings / 일요일 03:00 weekly` (`./scheduler/install.sh install`)*")
+    o.append("*launchd 자동: `평일 16:30 daily (통합) / 일요일 03:00 weekly` (`./scheduler/install.sh install`)*")
     o.append("")
     o.append("*과거 backtest + 재무 기반. 미래 보장 없음. 진입 결정은 §13 사람 검증 후.*")
 
