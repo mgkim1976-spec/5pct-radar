@@ -4,9 +4,10 @@
   radar opportunities --deep           # 상위 후보 dive 까지 (~10분)
   radar opportunities --top 20         # 상위 N (기본 15)
 
-점수 (총 135점):
+점수 (총 145점):
   - actor backtest    (40): 검증 운용사 hit15
   - 매매 신선도        (10): 최근 매수 ≤ 30일 / 차익거래 -15
+  - **follow 적기**   (10): 현재가 vs 운용사 매수 가중평균
   - 잠정 영업 YoY     (15): +50% 15 / +20% 10 / +0% 5
   - 분기 가속          (15): 연간 vs 1Q 가속도
   - 매출 YoY          (10): +30% 10 / +10% 5
@@ -59,12 +60,13 @@ def gather_universe(include_today: bool = True) -> dict[str, dict]:
         code = h["stock_code"]
         if code not in universe:
             universe[code] = {"actors": [], "today_filing": None,
-                              "holding_dates": [], "buy_avgs": []}
+                              "holding_dates": [], "buy_avgs": [], "held_values": []}
         universe[code]["actors"].append(h["actor"])
         if h.get("entry_date"):
             universe[code]["holding_dates"].append(h["entry_date"])
         if h.get("buy_avg"):
             universe[code]["buy_avgs"].append(h["buy_avg"])
+            universe[code]["held_values"].append(h.get("held_value", 0))
 
     # 2) 오늘 신고
     if include_today:
@@ -314,6 +316,36 @@ def score_opportunity(code: str, u_data: dict, fin_cache: dict,
         cons_score = 5; flags.append(f"🤝 운용사 2명 동시 보유")
     breakdown["consensus"] = cons_score
 
+    # 8.5) follow 적기 (10) — 운용사 매수 가중평균 대비 현재가
+    timing_score = 0
+    avg_buy_price = None
+    if u_data.get("buy_avgs") and u_data.get("held_values"):
+        # 운용사별 보유금액 가중 매수 가중평균
+        buys = u_data["buy_avgs"]
+        vals = u_data["held_values"]
+        total_val = sum(vals)
+        if total_val > 0 and len(buys) == len(vals):
+            avg_buy_price = sum(b * v for b, v in zip(buys, vals)) / total_val
+            if avg_buy_price > 0:
+                ratio = cur_price / avg_buy_price
+                if ratio <= 0.95:
+                    timing_score = 10
+                    flags.append(f"✅ follow 적기 (현재가 < 운용사 단가 {(ratio-1)*100:+.0f}%)")
+                elif ratio <= 1.05:
+                    timing_score = 8
+                    flags.append(f"✅ follow 적기 (단가 ±{(ratio-1)*100:+.0f}%)")
+                elif ratio <= 1.15:
+                    timing_score = 5
+                elif ratio <= 1.30:
+                    timing_score = 0
+                elif ratio <= 1.50:
+                    timing_score = -5
+                    flags.append(f"🟡 follow 약간 늦음 ({(ratio-1)*100:+.0f}%)")
+                else:
+                    timing_score = -15
+                    flags.append(f"🔴 follow 매우 늦음 (단가 {(ratio-1)*100:+.0f}%)")
+    breakdown["timing"] = timing_score
+
     # 9) 부채비율 (3)
     debt_score = 0
     debt_ratio = None
@@ -343,6 +375,8 @@ def score_opportunity(code: str, u_data: dict, fin_cache: dict,
         "total": total, "breakdown": breakdown, "flags": flags,
         "matched_actor": matched_actor, "n_actors": cons_count,
         "cur_price": cur_price,
+        "avg_buy_price": round(avg_buy_price, 0) if avg_buy_price else None,
+        "timing_pct": round((cur_price/avg_buy_price-1)*100, 1) if avg_buy_price else None,
         "nav_pbr": round(nav_pbr, 2) if nav_pbr and nav_pbr < 99 else None,
         "op_yoy_annual": round(annual_op_yoy, 1) if annual_op_yoy is not None else None,
         "op_yoy_quarter": round(quarterly_op_yoy, 1) if quarterly_op_yoy is not None else None,
@@ -389,31 +423,36 @@ def build_opportunities(top_n: int = 15) -> tuple[str, list[dict]]:
     # 종합 표
     o.append("## §1. 종합 ranking")
     o.append("")
-    o.append("| # | 종목 | **총점** | NAV PBR | 연간 영업 | 분기 영업 | 매출 | 자기주식 | 부채 | 6M | actor |")
-    o.append("|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---|")
+    o.append("| # | 종목 | **총점** | NAV PBR | 분기 영업 | 매출 | 자기주식 | 부채 | **단가 vs 현재** | actor |")
+    o.append("|---:|---|---:|---:|---:|---:|---:|---:|---:|---|")
     for i, r in enumerate(ranked, 1):
         emoji = "🥇" if i == 1 else ("🥈" if i == 2 else ("🥉" if i == 3 else f"{i:>2}"))
         pbr = f"{r['nav_pbr']:.2f}" if r['nav_pbr'] else "—"
-        op_a = f"{r['op_yoy_annual']:+.0f}%" if r['op_yoy_annual'] is not None else "—"
         op_q = f"{r['op_yoy_quarter']:+.0f}%" if r['op_yoy_quarter'] is not None else "—"
         rev = f"{r['rev_yoy']:+.0f}%" if r['rev_yoy'] is not None else "—"
         tes = f"{r['tes_pct']:.1f}%" if r['tes_pct'] is not None else "—"
         debt = f"{r['debt_ratio']:.0f}%" if r['debt_ratio'] is not None else "—"
-        ret = f"{r['ret6m']:+.0f}%"
+        timing = f"{r['timing_pct']:+.0f}%" if r['timing_pct'] is not None else "—"
+        # timing 색깔
+        if r['timing_pct'] is not None:
+            if r['timing_pct'] <= 5: timing = f"🟢 {timing}"
+            elif r['timing_pct'] <= 30: timing = f"🟡 {timing}"
+            else: timing = f"🔴 {timing}"
         actor = r['matched_actor'][:10] if r['matched_actor'] else "—"
-        o.append(f"| {emoji} | **{r['corp_name']}**({r['stock_code']}) | **{r['total']}** | {pbr} | {op_a} | {op_q} | {rev} | {tes} | {debt} | {ret} | {actor} |")
+        o.append(f"| {emoji} | **{r['corp_name']}**({r['stock_code']}) | **{r['total']}** | {pbr} | {op_q} | {rev} | {tes} | {debt} | {timing} | {actor} |")
     o.append("")
 
     # 항목별 매트릭스
-    o.append("## §2. 항목별 점수 매트릭스 (135점 만점)")
+    o.append("## §2. 항목별 점수 매트릭스 (145점 만점)")
     o.append("")
-    o.append("| # | 종목 | actor (40) | 신선 (10) | 잠정 (15) | 가속 (15) | 매출 (10) | NAV (15) | 자기주식 (15) | cons (10) | 부채 (3) | 가격 (2) | **총** |")
-    o.append("|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
+    o.append("| # | 종목 | actor (40) | 신선 (10) | **timing (10)** | 잠정 (15) | 가속 (15) | 매출 (10) | NAV (15) | 자기주식 (15) | cons (10) | 부채 (3) | 가격 (2) | **총** |")
+    o.append("|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
     for i, r in enumerate(ranked, 1):
         emoji = "🥇" if i == 1 else ("🥈" if i == 2 else ("🥉" if i == 3 else f"{i:>2}"))
         b = r["breakdown"]
         o.append(f"| {emoji} | {r['corp_name']}({r['stock_code']}) | "
                  f"{b.get('actor',0):>3} | {b.get('freshness',0):>3} | "
+                 f"**{b.get('timing',0):>3}** | "
                  f"{b.get('prelim',0):>3} | {b.get('accel',0):>3} | "
                  f"{b.get('revenue',0):>3} | {b.get('nav_pbr',0):>3} | "
                  f"{b.get('treasury',0):>3} | {b.get('consensus',0):>3} | "
