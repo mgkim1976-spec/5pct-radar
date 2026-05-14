@@ -251,7 +251,7 @@ def self_test() -> bool:
     return all_ok
 
 
-SUBCOMMANDS = {"today", "dive", "position", "journal", "notify", "size", "rank", "daily", "holdings", "opportunities"}
+SUBCOMMANDS = {"today", "dive", "position", "journal", "notify", "size", "rank", "daily", "holdings", "opportunities", "diff", "retrospect", "calendar"}
 
 
 def _dispatch_subcommand() -> bool:
@@ -401,6 +401,41 @@ def _dispatch_subcommand() -> bool:
         a = ap.parse_args(rest)
         path = save_opportunities(top_n=a.top)
         print(f"\n결과:\n")
+        print(path.read_text(encoding="utf-8"))
+        return True
+
+    if cmd == "diff":
+        from .workflow.history import get_diff, render_diff
+        ap = argparse.ArgumentParser(prog="radar diff")
+        ap.add_argument("--days", type=int, default=1, help="N일 전과 비교 (기본 1)")
+        a = ap.parse_args(rest)
+        diff, today_iso, y_date = get_diff(days_back=a.days)
+        if diff is None:
+            print(f"⚠️ opportunities JSON 부족 — 오늘 또는 {a.days}일 전 데이터 없음")
+            print(f"   먼저 `radar opportunities` 실행 후 내일 다시 시도")
+            return True
+        md = render_diff(diff, today_iso, y_date)
+        print(md)
+        return True
+
+    if cmd == "retrospect":
+        from .workflow.retrospect import save_retrospect
+        ap = argparse.ArgumentParser(prog="radar retrospect")
+        ap.add_argument("--days", type=int, default=7, help="N일 전 ranking 검증 (기본 7)")
+        a = ap.parse_args(rest)
+        path = save_retrospect(days_back=a.days)
+        if path:
+            print(f"\n✅ 저장: {path}\n")
+            print(path.read_text(encoding="utf-8"))
+        return True
+
+    if cmd == "calendar":
+        from .workflow.calendar_ import save_calendar
+        ap = argparse.ArgumentParser(prog="radar calendar")
+        ap.add_argument("--days", type=int, default=30, help="향후 N일 (기본 30)")
+        a = ap.parse_args(rest)
+        path = save_calendar(days_ahead=a.days)
+        print(f"\n✅ 저장: {path}\n")
         print(path.read_text(encoding="utf-8"))
         return True
 
