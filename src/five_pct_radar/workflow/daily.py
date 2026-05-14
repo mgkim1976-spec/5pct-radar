@@ -27,6 +27,7 @@ from ..workflow.today import fetch_recent_5pct, score_filing
 from ..workflow.opportunities import build_opportunities
 from ..workflow.holdings import gather_holdings
 from ..workflow.movements import detect_movements_from_today
+from ..workflow.history import compute_diff, _find_past_opp, _load_opp_json
 
 DAILY_DIR = DATA_DIR / "daily"
 
@@ -81,6 +82,31 @@ def build_daily(top_n: int = 15, *, auto_dive: bool = True) -> str:
             line = "#### " + line[len("### "):]
         o.append(line)
     o.append("")
+
+    # §2.5 ranking diff (어제 vs 오늘)
+    today_str = datetime.now().strftime("%Y%m%d")
+    today_ranking_data = _load_opp_json(today_str)
+    if today_ranking_data:
+        past_data, y_date = _find_past_opp(days_back=1)
+        if past_data and y_date:
+            diff = compute_diff(past_data, today_ranking_data, top_threshold=top_n)
+            n_changes = sum(len(diff[k]) for k in diff)
+            if n_changes > 0:
+                o.append(f"### §2.4. 🔄 어제({y_date}) 대비 변화")
+                o.append("")
+                if diff["new_entries"]:
+                    new_s = ", ".join(f"**{h['corp_name']}**(#{h['rank']})" for h in diff["new_entries"][:5])
+                    o.append(f"- 🆕 **새 진입**: {new_s}" + (f" (+{len(diff['new_entries'])-5} 더)" if len(diff['new_entries']) > 5 else ""))
+                if diff["dropped"]:
+                    drop_s = ", ".join(f"{h['corp_name']}(#{h['rank']})" for h in diff["dropped"][:5])
+                    o.append(f"- 🚪 **탈락**: {drop_s}" + (f" (+{len(diff['dropped'])-5} 더)" if len(diff['dropped']) > 5 else ""))
+                if diff["score_up"]:
+                    up_s = ", ".join(f"**{h['corp_name']}** (+{h['score_delta']})" for h in diff["score_up"][:3])
+                    o.append(f"- ⬆️ **점수 급상승**: {up_s}")
+                if diff["score_down"]:
+                    down_s = ", ".join(f"{h['corp_name']} ({h['score_delta']:+d})" for h in diff["score_down"][:3])
+                    o.append(f"- ⬇️ **점수 급하락**: {down_s}")
+                o.append("")
 
     # §3. 운용사 변동 + §4. 보유 현황 + 자동 dive
     print(f"[2/4] 운용사 변동 + 보유 + 자동 dive ...")

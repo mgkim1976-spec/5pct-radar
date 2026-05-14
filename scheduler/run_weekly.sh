@@ -20,8 +20,13 @@ echo "[2/3] 10년 lifecycle backtest" >> "$LOG"
 python -m five_pct_radar --lifecycle 3650 >> "$LOG" 2>&1
 rc=$?
 
-# 3) today 1회 (확인용)
-echo "[3/3] today 검증" >> "$LOG"
+# 3) retrospect — 알파 검증 (1주 + 1개월)
+echo "[3/4] retrospect 알파 검증" >> "$LOG"
+python -m five_pct_radar retrospect --days 7 >> "$LOG" 2>&1
+python -m five_pct_radar retrospect --days 30 >> "$LOG" 2>&1
+
+# 4) today 1회 (확인용)
+echo "[4/4] today 검증" >> "$LOG"
 python -m five_pct_radar today >> "$LOG" 2>&1
 
 if [ $rc -ne 0 ]; then
