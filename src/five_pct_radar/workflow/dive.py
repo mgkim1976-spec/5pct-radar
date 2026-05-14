@@ -708,14 +708,57 @@ def _build_markdown(*, stock_code, corp_name, corp_code, company, annual_year, a
                      f"{d['n_sells']} | {d['sell_avg']:,.0f}원 | {d['net_avg']:,.0f}원 | {sig} |")
         o.append("")
 
-        # 가장 큰 buyer 의 매매 흐름 timeline
+        # 가장 큰 buyer 의 매매 흐름 — 전체 통계 + 패턴 분석 + 전체 timeline
         if rows:
             top_actor, top_d = rows[0]
-            o.append(f"### ⭐ Top buyer: **{top_actor}** 매매 timeline")
+            buys = [t for t in top_d["trades"] if t["kind"] == "buy"]
+            sells = [t for t in top_d["trades"] if t["kind"] == "sell"]
+            buy_qty = sum(t["qty"] for t in buys)
+            buy_amt = sum(t["qty"] * t["price"] for t in buys)
+            sell_qty = sum(t["qty"] for t in sells)
+            sell_amt = sum(t["qty"] * t["price"] for t in sells)
+            net_qty = buy_qty - sell_qty
+            net_amt = buy_amt - sell_amt
+            buy_avg = buy_amt / buy_qty if buy_qty else 0
+            sell_avg = sell_amt / sell_qty if sell_qty else 0
+            net_avg = net_amt / net_qty if net_qty else 0
+            first_date = top_d["trades"][0]["date"] if top_d["trades"] else ""
+            last_date = top_d["trades"][-1]["date"] if top_d["trades"] else ""
+            recent_price = top_d["trades"][-1]["price"] if top_d["trades"] else 0
+
+            o.append(f"### ⭐ Top buyer: **{top_actor}** 매매 통계")
+            o.append("")
+            o.append(f"**기간**: {first_date} ~ {last_date} ({len(top_d['trades'])}건)")
+            o.append("")
+            o.append("| 항목 | 횟수 | 총 수량 | 가중평균 단가 |")
+            o.append("|---|---:|---:|---:|")
+            o.append(f"| **매수** | {len(buys)} | **{buy_qty:,}주** | **{buy_avg:,.0f}원** |")
+            o.append(f"| **매도** | {len(sells)} | {sell_qty:,}주 | {sell_avg:,.0f}원 |")
+            o.append(f"| **순매집** | — | **{net_qty:,}주** | **{net_avg:,.0f}원** (실효) |")
+            o.append("")
+            o.append(f"- 순투자금: **{net_amt:,}원** (약 {net_amt/1e8:.1f}억)")
+            if cur_price > 0:
+                o.append("")
+                o.append("**현재가 (oa) 대비 비교:**")
+                o.append("")
+                o.append("| 기준 | 가격 | 현재가 차이 |")
+                o.append("|---|---:|---:|")
+                if buy_avg:
+                    o.append(f"| 매수 가중평균 | {buy_avg:,.0f}원 | {(cur_price/buy_avg-1)*100:+.1f}% |")
+                if sell_avg:
+                    o.append(f"| 매도 가중평균 | {sell_avg:,.0f}원 | {(cur_price/sell_avg-1)*100:+.1f}% |")
+                if net_avg:
+                    o.append(f"| 순매집 실효단가 | {net_avg:,.0f}원 | {(cur_price/net_avg-1)*100:+.1f}% |")
+                if recent_price:
+                    o.append(f"| 가장 최근 매수 | {recent_price:,}원 | {(cur_price/recent_price-1)*100:+.1f}% |")
+                o.append(f"| **현재가** | **{cur_price:,.0f}원** | — |")
+            o.append("")
+
+            o.append(f"### {top_actor} 매매 timeline (전체 {len(top_d['trades'])}건)")
             o.append("")
             o.append("| 일자 | 종류 | 수량 | 단가 |")
             o.append("|---|---|---:|---:|")
-            for t in top_d["trades"][-20:]:
+            for t in top_d["trades"]:
                 kind = "🟢 매수" if t["kind"] == "buy" else "🔴 매도"
                 o.append(f"| {t['date']} | {kind} | {t['qty']:,}주 | {t['price']:,}원 |")
             o.append("")
