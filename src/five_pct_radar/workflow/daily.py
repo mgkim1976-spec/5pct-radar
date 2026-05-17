@@ -28,6 +28,7 @@ from ..workflow.opportunities import build_opportunities
 from ..workflow.holdings import gather_holdings
 from ..workflow.movements import detect_movements_from_today
 from ..workflow.history import compute_diff, _find_past_opp, _load_opp_json
+from ..workflow.publish_mgprj import publish_holdings
 
 DAILY_DIR = DATA_DIR / "daily"
 
@@ -112,6 +113,12 @@ def build_daily(top_n: int = 15, *, auto_dive: bool = True) -> str:
     print(f"[2/4] 운용사 변동 + 보유 + 자동 dive ...")
     holdings_data = gather_holdings()
     movements, _, y_date = detect_movements_from_today(holdings_data["all"])
+
+    try:
+        latest, snap = publish_holdings(holdings_data["all"])
+        print(f"    ↪ MGPRJ publish: {latest} + snapshot")
+    except Exception as e:
+        print(f"    ⚠ MGPRJ publish skipped: {e}")
 
     # 변동 종목 자동 dive (신규 + 비중 증가)
     auto_dive_count = 0
